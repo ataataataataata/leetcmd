@@ -20,6 +20,7 @@ const std::string url ="https://leetcode.com/graphql";
 
 std::vector<question> getAllQuestions();
 void printGetAllQuestions();
+void getQuestionDetail(std::string titleSlug);
 
 
 #endif //LEETCMD_LEETCODE_CLIENT_H
