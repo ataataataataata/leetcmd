@@ -7,8 +7,8 @@ std::vector<question> getAllQuestions() {
 
     std::vector<std::string> headers;
     headers.push_back("Content-Type: application/json");
-    headers.push_back("Cookie: LEETCODE_SESSION=SESSION_TOKEN_REDACTED; csrftoken=CSRF_TOKEN_REDACTED");
-    headers.push_back("x-csrftoken:CSRF_TOKEN_REDACTED");
+    headers.push_back("Cookie: LEETCODE_SESSION=LOL; csrftoken=LOL");
+    headers.push_back("x-csrftoken:LOL");
     headers.push_back("Referer: https://leetcode.com/problemset/");
     headers.push_back("Origin: https://leetcode.com");
 
