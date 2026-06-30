@@ -7,6 +7,7 @@
 struct question {
     int id;
     std::string title;
+    std::string titleSlug;
     std::string difficulty;
     std::string status;
     bool paidOnly;

@@ -26,6 +26,7 @@ std::vector<question> getAllQuestions() {
         question question;
         question.id = q["id"];
         question.title = q["title"];
+        question.titleSlug = q["titleSlug"];
         question.difficulty = q["difficulty"];
         question.status = q["status"];
         question.paidOnly = q["paidOnly"];
