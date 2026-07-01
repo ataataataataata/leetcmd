@@ -2,7 +2,7 @@
 #include "include/http_client.h"
 
 
-std::vector<question> getAllQuestions() {
+std::vector<questionAtList> getAllQuestions() {
     std::string response;
 
     std::vector<std::string> headers;
@@ -20,10 +20,10 @@ std::vector<question> getAllQuestions() {
     nlohmann::json j = nlohmann::json::parse(response);
 
 
-    std::vector<question> questionList;
+    std::vector<questionAtList> questionList;
     auto questions = j["data"]["problemsetQuestionListV2"]["questions"];
     for (auto& q: questions) {
-        question question;
+        questionAtList question;
         question.id = q["id"];
         question.title = q["title"];
         question.titleSlug = q["titleSlug"];
@@ -60,7 +60,7 @@ void getQuestionDetail(std::string titleSlug) {
 }
 
 void printGetAllQuestions() {
-    std::vector<question> questionList = getAllQuestions();
+    std::vector<questionAtList> questionList = getAllQuestions();
 
     for (auto& q : questionList) {
 
