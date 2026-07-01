@@ -14,29 +14,29 @@ struct questionAtList {
     std::vector<std::string> topicTags;
 };
 
-struct languageList {
+struct language {
     int id;
     std::string name;
 };
 
-struct codeSnippets {
+struct codeSnippet {
     std::string code;
     std::string lang;
     std::string langSlug;
 };
 
-struct topicTags {
+struct topicTag {
     std::string name;
     std::string slug;
     std::string translatedName;
 };
 
-struct statusList {
+struct status {
     int id;
     std::string name;
 };
 
-struct submittableLanguageList {
+struct submittableLanguage {
     int id;
     std::string name;
     std::string verboseName;
@@ -51,19 +51,19 @@ struct ugcArticleOfficialSolutionArticle {
 
 struct question{
     std::string adminUrl;
-    boolean aiJudgingAvailable;
-    boolean canSeeQuestion;
+    bool aiJudgingAvailable;
+    bool canSeeQuestion;
     std::string categoryTitle;
-    codeSnippets codeSnippets;
+    std::vector<codeSnippet> codeSnippets;
     std::string companyTagStatsV2;
     std::string content;
     //"dataSchemas": [] skipped
     std::string difficulty;
     int dislikes;
-    boolean enableDebugger;
-    boolean enableRunCode;
-    boolean enableSubmit;
-    boolean enableTestMode;
+    bool enableDebugger;
+    bool enableRunCode;
+    bool enableSubmit;
+    bool enableTestMode;
     std::string envInfo;
     std::vector<std::string> exampleTestcaseList;
     //"featuredContests": [] skipped
@@ -73,7 +73,7 @@ struct question{
     //"isLiked": null skipped
     //"isPaidOnly": false skipped
     //libraryUrl": null skipped
-    std::string likes;
+    int likes;
     std::string metaData;
     //"mysqlSchemas": [] skipped
     //"nextChallenges": [] skipped
@@ -83,21 +83,21 @@ struct question{
     std::string questionTitle;
     //"similarQuestionList": [] skipped
     std::string stats;
-    std::string status;
+    //std::string status;
     std::string title;
     std::string titleSlug;
-    std::vector<topicTags> topicTags;
+    std::vector<topicTag> topicTags;
     //"translatedContent": null skipped
     //"translatedTitle": null skipped
     //questionDiscussionTopic": null skipped  
-    std::vector<statusList> statusList;
-    std::vector<submittableLanguageList> submittableLanguageList;
-    std::vector<ugcArticleOfficialSolutionArticle> ugcArticleOfficialSolutionArticle;
+    std::vector<status> statusList;
+    std::vector<submittableLanguage> submittableLanguageList;
+    std::vector<ugcArticleOfficialSolutionArticle> ugcArticleOfficialSolutionArticlee;
 };
 
 struct questionDetail{
-    std::vector<languageList> languageList;
-    question question;
+    std::vector<language> languageList;
+    question questionn;
 };
 
 
@@ -106,7 +106,7 @@ const std::string url ="https://leetcode.com/graphql";
 
 std::vector<questionAtList> getAllQuestions();
 void printGetAllQuestions();
-void getQuestionDetail(std::string titleSlug);
-
+questionDetail getQuestionDetail(std::string titleSlug);
+void printGetQuestionDetail(std::string titleSlug);
 
 #endif //LEETCMD_LEETCODE_CLIENT_H
