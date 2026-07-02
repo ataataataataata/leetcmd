@@ -14,6 +14,7 @@ std::vector<questionAtList> getAllQuestions()
 
     std::string bodyText = R"JSON({"operationName":"problemsetQuestionListV2","query":"\n    query problemsetQuestionListV2($filters: QuestionFilterInput, $limit: Int, $searchKeyword: String, $skip: Int, $sortBy: QuestionSortByInput, $categorySlug: String) {\n  problemsetQuestionListV2(\n    filters: $filters\n    limit: $limit\n    searchKeyword: $searchKeyword\n    skip: $skip\n    sortBy: $sortBy\n    categorySlug: $categorySlug\n  ) {\n    questions {\n      id\n      titleSlug\n      title\n      translatedTitle\n      questionFrontendId\n      paidOnly\n      difficulty\n      topicTags {\n        name\n        slug\n        nameTranslated\n      }\n      status\n      isInMyFavorites\n      frequency\n      acRate\n      contestPoint\n    }\n    totalLength\n    finishedLength\n    hasMore\n  }\n}\n    ","variables":{"skip":0,"limit":100,"categorySlug":"all-code-essentials","searchKeyword":"","sortBy":{"sortField":"CUSTOM","sortOrder":"ASCENDING"},"filters":{"filterCombineType":"ALL","statusFilter":{"questionStatuses":[],"operator":"IS"}}}})JSON";
 
+    std::string url = "https://leetcode.com/graphql";
     response = httpPost(url, bodyText, headers);
 
     nlohmann::json j = nlohmann::json::parse(response);
@@ -55,13 +56,14 @@ questionDetail getQuestionDetail(std::string titleSlug)
     j["query"] = "\n    query questionDetail($titleSlug: String!) {\n  languageList {\n    id\n    name\n  }\n  submittableLanguageList {\n    id\n    name\n    verboseName\n  }\n  statusList {\n    id\n    name\n  }\n  questionDiscussionTopic(questionSlug: $titleSlug) {\n    id\n    commentCount\n    topLevelCommentCount\n  }\n  ugcArticleOfficialSolutionArticle(questionSlug: $titleSlug) {\n    uuid\n    chargeType\n    canSee\n    hasVideoArticle\n  }\n  question(titleSlug: $titleSlug) {\n    title\n    titleSlug\n    questionId\n    questionFrontendId\n    questionTitle\n    translatedTitle\n    content\n    translatedContent\n    categoryTitle\n    difficulty\n    stats\n    companyTagStatsV2\n    topicTags {\n      name\n      slug\n      translatedName\n    }\n    positionLevelTags {\n      name\n      nameTranslated\n      slug\n    }\n    similarQuestionList {\n      difficulty\n      titleSlug\n      title\n      translatedTitle\n      isPaidOnly\n    }\n    mysqlSchemas\n    dataSchemas\n    frontendPreviews\n    likes\n    dislikes\n    isPaidOnly\n    status\n    canSeeQuestion\n    enableTestMode\n    metaData\n    enableRunCode\n    enableSubmit\n    enableDebugger\n    envInfo\n    isLiked\n    nextChallenges {\n      difficulty\n      title\n      titleSlug\n      questionFrontendId\n    }\n    libraryUrl\n    adminUrl\n    hints\n    codeSnippets {\n      code\n      lang\n      langSlug\n    }\n    exampleTestcaseList\n    hasFrontendPreview\n    featuredContests {\n      titleSlug\n      title\n    }\n    aiJudgingAvailable\n  }\n}\n    ";
     j["variables"]["titleSlug"] = titleSlug;
 
+    std::string url = "https://leetcode.com/graphql";
+
     response = httpPost(url, j.dump(), headers);
     nlohmann::json r = nlohmann::json::parse(response);
 
     question q;
     auto &questionJson = r["data"]["question"];
 
-    
     q.adminUrl = (questionJson.contains("adminUrl") && !questionJson["adminUrl"].is_null())
                      ? questionJson["adminUrl"].get<std::string>()
                      : "";
@@ -117,24 +119,20 @@ questionDetail getQuestionDetail(std::string titleSlug)
                       ? questionJson["titleSlug"].get<std::string>()
                       : "";
 
-    
     q.dislikes = questionJson.value("dislikes", 0);
     q.likes = questionJson.value("likes", 0);
 
-    
     q.enableDebugger = questionJson.value("enableDebugger", false);
     q.enableRunCode = questionJson.value("enableRunCode", false);
     q.enableSubmit = questionJson.value("enableSubmit", false);
     q.enableTestMode = questionJson.value("enableTestMode", false);
 
-    
     if (questionJson.contains("exampleTestcaseList") && questionJson["exampleTestcaseList"].is_array())
     {
         for (auto &testcase : questionJson["exampleTestcaseList"])
             q.exampleTestcaseList.push_back(testcase.get<std::string>());
     }
 
-    
     if (questionJson.contains("codeSnippets") && questionJson["codeSnippets"].is_array())
     {
         for (auto &cs : questionJson["codeSnippets"])
@@ -147,7 +145,6 @@ questionDetail getQuestionDetail(std::string titleSlug)
         }
     }
 
-    
     if (questionJson.contains("topicTags") && questionJson["topicTags"].is_array())
     {
         for (auto &tag : questionJson["topicTags"])
@@ -164,7 +161,6 @@ questionDetail getQuestionDetail(std::string titleSlug)
         }
     }
 
-    
     if (r["data"]["statusList"].is_array())
     {
         for (auto &s : r["data"]["statusList"])
@@ -176,7 +172,6 @@ questionDetail getQuestionDetail(std::string titleSlug)
         }
     }
 
-    
     if (r["data"]["submittableLanguageList"].is_array())
     {
         for (auto &lang : r["data"]["submittableLanguageList"])
@@ -189,7 +184,6 @@ questionDetail getQuestionDetail(std::string titleSlug)
         }
     }
 
-    
     if (r["data"]["ugcArticleOfficialSolutionArticle"].is_object() && !r["data"]["ugcArticleOfficialSolutionArticle"].is_null())
     {
         auto article = r["data"]["ugcArticleOfficialSolutionArticle"];
@@ -203,7 +197,6 @@ questionDetail getQuestionDetail(std::string titleSlug)
         q.ugcArticleOfficialSolutionArticlee.push_back(u);
     }
 
-    
     questionDetail qd;
 
     if (r["data"]["languageList"].is_array())
@@ -220,6 +213,107 @@ questionDetail getQuestionDetail(std::string titleSlug)
     qd.questionn = q;
 
     return qd;
+}
+
+submitResponse submitCode(std::string titleSlug, std::string code, std::string langSlug, std::string questionId)
+{
+    std::string response;
+
+    std::vector<std::string> headers;
+    headers.push_back("Content-Type: application/json");
+    headers.push_back("Cookie: LEETCODE_SESSION=LOL ; csrftoken=LOL");
+    headers.push_back("x-csrftoken:LOL");
+    headers.push_back("Referer: https://leetcode.com/problems/" + titleSlug + "/");
+    headers.push_back("Origin: https://leetcode.com");
+
+    std::string url = "https://leetcode.com/problems/" + titleSlug + "/submit/";
+
+    nlohmann::json j;
+    j["lang"] = langSlug;
+    j["question_id"] = questionId;
+    j["typed_code"] = code;
+
+    response = httpPost(url, j.dump(), headers);
+    nlohmann::json r = nlohmann::json::parse(response);
+
+    submitResponse sr;
+    sr.submissionId = r["submission_id"].get<long long>();
+    return sr;
+}
+
+submissionDetail getSubmitDetail(long long submissionId, std::string titleSlug)
+{
+    std::string response;
+
+    std::vector<std::string> headers;
+    headers.push_back("Content-Type: application/json");
+    headers.push_back("Cookie: LEETCODE_SESSION=LOL; csrftoken=LOL");
+    headers.push_back("x-csrftoken:LOL");
+    headers.push_back("Referer: https://leetcode.com/problems/" + titleSlug + "/");
+    headers.push_back("Origin: https://leetcode.com");
+
+    const std::string url = "https://leetcode.com/graphql";
+
+    nlohmann::json j;
+    j["operationName"] = "submissionDetails";
+    j["query"] = "\n    query submissionDetails($submissionId: Int!) {\n  submissionDetails(submissionId: $submissionId) {\n    runtime\n    runtimeDisplay\n    runtimePercentile\n    runtimeDistribution\n    memory\n    memoryDisplay\n    memoryPercentile\n    memoryDistribution\n    code\n    timestamp\n    statusCode\n    aiJudgeMessage\n    isCompiledLang\n    aiRecheckSubmitted\n    user {\n      username\n      profile {\n        realName\n        userAvatar\n      }\n    }\n    lang {\n      name\n      verboseName\n    }\n    question {\n      questionId\n      titleSlug\n      hasFrontendPreview\n    }\n    notes\n    flagType\n    topicTags {\n      tagId\n      slug\n      name\n    }\n    runtimeError\n    compileError\n    lastTestcase\n    codeOutput\n    expectedOutput\n    totalCorrect\n    totalTestcases\n    fullCodeOutput\n    testDescriptions\n    testBodies\n    testInfo\n    stdOutput\n  }\n}\n    ";
+    j["variables"]["submissionId"] = submissionId;
+
+    response = httpPost(url, j.dump(), headers);
+    nlohmann::json r = nlohmann::json::parse(response);
+
+    submissionDetail sd;
+    auto &submissionDetails = r["data"]["submissionDetails"];
+
+    sd.statusCode = (submissionDetails.contains("statusCode") && !submissionDetails["statusCode"].is_null())
+                        ? submissionDetails["statusCode"].get<int>()
+                        : 0;
+
+    sd.totalCorrect = (submissionDetails.contains("totalCorrect") && !submissionDetails["totalCorrect"].is_null())
+                          ? submissionDetails["totalCorrect"].get<int>()
+                          : 0;
+
+    sd.totalTestcases = (submissionDetails.contains("totalTestcases") && !submissionDetails["totalTestcases"].is_null())
+                            ? submissionDetails["totalTestcases"].get<int>()
+                            : 0;
+
+    sd.runtimeDisplay = (submissionDetails.contains("runtimeDisplay") && !submissionDetails["runtimeDisplay"].is_null())
+                            ? submissionDetails["runtimeDisplay"].get<std::string>()
+                            : "";
+
+    sd.runtimePercentile = (submissionDetails.contains("runtimePercentile") && !submissionDetails["runtimePercentile"].is_null())
+                               ? submissionDetails["runtimePercentile"].get<double>()
+                               : -1.0;
+
+    sd.memoryDisplay = (submissionDetails.contains("memoryDisplay") && !submissionDetails["memoryDisplay"].is_null())
+                           ? submissionDetails["memoryDisplay"].get<std::string>()
+                           : "";
+
+    sd.memoryPercentile = (submissionDetails.contains("memoryPercentile") && !submissionDetails["memoryPercentile"].is_null())
+                              ? submissionDetails["memoryPercentile"].get<double>()
+                              : -1.0;
+
+    sd.compileError = (submissionDetails.contains("compileError") && !submissionDetails["compileError"].is_null())
+                          ? submissionDetails["compileError"].get<std::string>()
+                          : "";
+
+    sd.runtimeError = (submissionDetails.contains("runtimeError") && !submissionDetails["runtimeError"].is_null())
+                          ? submissionDetails["runtimeError"].get<std::string>()
+                          : "";
+
+    sd.lastTestcase = (submissionDetails.contains("lastTestcase") && !submissionDetails["lastTestcase"].is_null())
+                          ? submissionDetails["lastTestcase"].get<std::string>()
+                          : "";
+
+    sd.codeOutput = (submissionDetails.contains("codeOutput") && !submissionDetails["codeOutput"].is_null())
+                        ? submissionDetails["codeOutput"].get<std::string>()
+                        : "";
+
+    sd.expectedOutput = (submissionDetails.contains("expectedOutput") && !submissionDetails["expectedOutput"].is_null())
+                            ? submissionDetails["expectedOutput"].get<std::string>()
+                            : "";
+
+    return sd;
 }
 
 void printGetAllQuestions()

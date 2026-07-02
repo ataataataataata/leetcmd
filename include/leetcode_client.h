@@ -4,7 +4,8 @@
 #include <nlohmann/json.hpp>
 #include <vector>
 
-struct questionAtList {
+struct questionAtList
+{
     int id;
     std::string title;
     std::string titleSlug;
@@ -14,42 +15,49 @@ struct questionAtList {
     std::vector<std::string> topicTags;
 };
 
-struct language {
+struct language
+{
     int id;
     std::string name;
 };
 
-struct codeSnippet {
+struct codeSnippet
+{
     std::string code;
     std::string lang;
     std::string langSlug;
 };
 
-struct topicTag {
+struct topicTag
+{
     std::string name;
     std::string slug;
     std::string translatedName;
 };
 
-struct status {
+struct status
+{
     int id;
     std::string name;
 };
 
-struct submittableLanguage {
+struct submittableLanguage
+{
     int id;
     std::string name;
     std::string verboseName;
 };
 
-struct ugcArticleOfficialSolutionArticle {
+struct ugcArticleOfficialSolutionArticle
+{
     std::string uuid;
     std::string chargeType;
     bool canSee;
     bool hasVideoArticle;
 };
 
-struct question{
+struct question
+{
     std::string adminUrl;
     bool aiJudgingAvailable;
     bool canSeeQuestion;
@@ -72,41 +80,61 @@ struct question{
     //"hints": [] skipped
     //"isLiked": null skipped
     //"isPaidOnly": false skipped
-    //libraryUrl": null skipped
+    // libraryUrl": null skipped
     int likes;
     std::string metaData;
     //"mysqlSchemas": [] skipped
     //"nextChallenges": [] skipped
-    //positionLevelTags": [] skipped
+    // positionLevelTags": [] skipped
     std::string questionFrontendId;
     std::string questionId;
     std::string questionTitle;
     //"similarQuestionList": [] skipped
     std::string stats;
-    //std::string status;
+    // std::string status;
     std::string title;
     std::string titleSlug;
     std::vector<topicTag> topicTags;
     //"translatedContent": null skipped
     //"translatedTitle": null skipped
-    //questionDiscussionTopic": null skipped  
+    // questionDiscussionTopic": null skipped
     std::vector<status> statusList;
     std::vector<submittableLanguage> submittableLanguageList;
     std::vector<ugcArticleOfficialSolutionArticle> ugcArticleOfficialSolutionArticlee;
 };
 
-struct questionDetail{
+struct questionDetail
+{
     std::vector<language> languageList;
     question questionn;
 };
 
+struct submitResponse
+{
+    long long submissionId;
+};
 
+struct submissionDetail
+{
+    int statusCode;
+    int totalCorrect;
+    int totalTestcases;
+    std::string runtimeDisplay;
+    double runtimePercentile;
+    std::string memoryDisplay;
+    double memoryPercentile;
+    std::string compileError;   
+    std::string runtimeError;   
+    std::string lastTestcase;   
+    std::string codeOutput;    
+    std::string expectedOutput; 
+};
 
-const std::string url ="https://leetcode.com/graphql";
 
 std::vector<questionAtList> getAllQuestions();
 void printGetAllQuestions();
 questionDetail getQuestionDetail(std::string titleSlug);
 void printGetQuestionDetail(std::string titleSlug);
+submitResponse submitCode(std::string titleSlug, std::string code, std::string langSlug, std::string questionId);
 
-#endif //LEETCMD_LEETCODE_CLIENT_H
+#endif // LEETCMD_LEETCODE_CLIENT_H
