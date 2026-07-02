@@ -5,12 +5,12 @@
 
 void drawLogo()
 {
-    int screen_width = COLS; 
+    int screen_width = COLS;
     int logo_width = 60;
     int start_x = (screen_width - logo_width) / 2;
 
-    
-    if (start_x < 0) start_x = 0;
+    if (start_x < 0)
+        start_x = 0;
 
     // Artık '30' yerine 'start_x' kullanıyoruz
     mvprintw(0, start_x, "dP                            dP                             dP ");
@@ -36,22 +36,29 @@ Screen mainScreen()
     {
 
         clear();
-        
-        int logo_width = 60; 
+
+        int logo_width = 60;
         int logo_start_x = (COLS - logo_width) / 2;
-        if (logo_start_x < 0) logo_start_x = 0;
+        if (logo_start_x < 0)
+            logo_start_x = 0;
         int list_start_x = (COLS - list_total_width) / 2;
-        if (list_start_x < 0) list_start_x = 0;
+        if (list_start_x < 0)
+            list_start_x = 0;
 
         drawLogo();
 
         for (int i = offset; i < offset + page_size && i < n; i++)
         {
 
-
-            if (i == highlight) {attron(A_REVERSE);}
+            if (i == highlight)
+            {
+                attron(A_REVERSE);
+            }
             mvprintw((i - offset) + LOGO_HEIGHT + 1, list_start_x, "%-70s %-15s %-10s", questions[i].title.c_str(), questions[i].difficulty.c_str(), questions[i].status.c_str());
-            if (i == highlight){attroff(A_REVERSE);}
+            if (i == highlight)
+            {
+                attroff(A_REVERSE);
+            }
         }
 
         refresh();
@@ -63,11 +70,11 @@ Screen mainScreen()
             if (highlight < 0)
             {
                 highlight = n - 1;
-                offset = (n > page_size) ? (n - page_size) : 0; 
+                offset = (n > page_size) ? (n - page_size) : 0;
             }
             else if (highlight < offset)
             {
-                offset--; 
+                offset--;
             }
         }
         else if (c == KEY_DOWN)
@@ -83,7 +90,40 @@ Screen mainScreen()
                 offset++;
             }
         }
+        else if (c == '\n' || c == KEY_ENTER)
+        {
+            return SCREEN_QUESTION;
+        }
+        else if (c == 'q' || c == 'Q')
+        {
+            return SCREEN_EXIT;
+        }
     }
+}
+
+Screen questionScreen()
+{
+    clear();
+    refresh();
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+    
+    WINDOW *questionInformation = newwin(rows, cols / 2, 0, 0);
+    WINDOW *questionCode = newwin(rows, cols / 2, 0, cols / 2);
+
+    box(questionInformation, 0, 0);
+    box(questionCode, 0, 0);
+
+    mvwprintw(questionInformation, 1, 1, "Question Information");
+    mvwprintw(questionCode, 1, 1, "Question Code");
+
+    wrefresh(questionInformation);
+    wrefresh(questionCode);
+
+    getch();
+    endwin();
+
+    return SCREEN_QUESTION;
 }
 
 int run_menu()
@@ -103,6 +143,11 @@ int run_menu()
         case SCREEN_MAIN:
             current = mainScreen();
             break;
+
+        case SCREEN_QUESTION:
+            current = questionScreen();
+            break;
+
         default:
             current = SCREEN_EXIT;
             break;

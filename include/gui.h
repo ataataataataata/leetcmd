@@ -3,6 +3,7 @@
 
 typedef enum {
     SCREEN_MAIN,
+    SCREEN_QUESTION,
     SCREEN_EXIT
 }Screen;
 
