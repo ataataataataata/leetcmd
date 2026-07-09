@@ -6,7 +6,7 @@
 
 struct questionAtList
 {
-    int id;
+    std::string id;
     std::string title;
     std::string titleSlug;
     std::string difficulty;
@@ -136,5 +136,6 @@ void printGetAllQuestions();
 questionDetail getQuestionDetail(std::string titleSlug);
 void printGetQuestionDetail(std::string titleSlug);
 submitResponse submitCode(std::string titleSlug, std::string code, std::string langSlug, std::string questionId);
+submissionDetail getSubmitDetail(long long submissionId, std::string titleSlug);
 
 #endif // LEETCMD_LEETCODE_CLIENT_H

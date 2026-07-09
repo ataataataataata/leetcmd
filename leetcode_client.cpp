@@ -1,5 +1,6 @@
 #include "include/leetcode_client.h"
 #include "include/http_client.h"
+#include <fstream>
 
 std::vector<questionAtList> getAllQuestions()
 {
@@ -7,8 +8,8 @@ std::vector<questionAtList> getAllQuestions()
 
     std::vector<std::string> headers;
     headers.push_back("Content-Type: application/json");
-    headers.push_back("Cookie: LEETCODE_SESSION=LOL; csrftoken=LOL");
-    headers.push_back("x-csrftoken:LOL");
+    headers.push_back("Cookie: LEETCODE_SESSION=SESSION_TOKEN_REDACTED; csrftoken=CSRF_TOKEN_REDACTED");
+    headers.push_back("x-csrftoken:CSRF_TOKEN_REDACTED");
     headers.push_back("Referer: https://leetcode.com/problemset/");
     headers.push_back("Origin: https://leetcode.com");
 
@@ -24,7 +25,10 @@ std::vector<questionAtList> getAllQuestions()
     for (auto &q : questions)
     {
         questionAtList question;
-        question.id = q["id"];
+        
+        question.id = q["questionFrontendId"].is_string()
+                          ? q["questionFrontendId"].get<std::string>()
+                          : std::to_string(q["questionFrontendId"].get<int>());
         question.title = q["title"];
         question.titleSlug = q["titleSlug"];
         question.difficulty = q["difficulty"];
@@ -46,8 +50,8 @@ questionDetail getQuestionDetail(std::string titleSlug)
 
     std::vector<std::string> headers;
     headers.push_back("Content-Type: application/json");
-    headers.push_back("Cookie: LEETCODE_SESSION=LOL; csrftoken=LOL");
-    headers.push_back("x-csrftoken:LOL");
+    headers.push_back("Cookie: LEETCODE_SESSION=SESSION_TOKEN_REDACTED; csrftoken=CSRF_TOKEN_REDACTED");
+    headers.push_back("x-csrftoken:CSRF_TOKEN_REDACTED");
     headers.push_back("Referer: https://leetcode.com/problemset/");
     headers.push_back("Origin: https://leetcode.com");
 
@@ -215,14 +219,41 @@ questionDetail getQuestionDetail(std::string titleSlug)
     return qd;
 }
 
+void logDebug(const std::string &filename, const std::string &label, const std::string &content)
+{
+    std::ofstream file(filename, std::ios::app);
+    if (file.is_open())
+    {
+        file << "--- " << label << " ---" << std::endl;
+        file << content << std::endl;
+        file.close();
+    }
+}
+
 submitResponse submitCode(std::string titleSlug, std::string code, std::string langSlug, std::string questionId)
 {
     std::string response;
 
+    std::string cleanId = "";
+    for (char c : questionId)
+    {
+        if (isdigit(c))
+            cleanId += c;
+    }
+
+    std::cerr << "DEBUG: Attempting to submit. Raw ID: [" << questionId
+              << "], Cleaned ID: [" << cleanId << "]" << std::endl;
+
+    if (cleanId.empty())
+    {
+        throw std::runtime_error("CRITICAL: questionId is empty or invalid! Input: " + questionId);
+    }
+
     std::vector<std::string> headers;
     headers.push_back("Content-Type: application/json");
-    headers.push_back("Cookie: LEETCODE_SESSION=LOL ; csrftoken=LOL");
-    headers.push_back("x-csrftoken:LOL");
+    headers.push_back("Cookie: LEETCODE_SESSION=SESSION_TOKEN_REDACTED ; csrftoken=CSRF_TOKEN_REDACTED");
+    headers.push_back("x-csrftoken:CSRF_TOKEN_REDACTED");
+    headers.push_back("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
     headers.push_back("Referer: https://leetcode.com/problems/" + titleSlug + "/");
     headers.push_back("Origin: https://leetcode.com");
 
@@ -230,14 +261,34 @@ submitResponse submitCode(std::string titleSlug, std::string code, std::string l
 
     nlohmann::json j;
     j["lang"] = langSlug;
-    j["question_id"] = questionId;
+    j["question_id"] = std::stoi(questionId);
     j["typed_code"] = code;
 
+    std::string payload = j.dump();
+    logDebug("debug_submit.log", "SUBMIT PAYLOAD", payload);
+
     response = httpPost(url, j.dump(), headers);
-    nlohmann::json r = nlohmann::json::parse(response);
+    logDebug("debug_submit.log", "SUBMIT RESPONSE", response);
 
     submitResponse sr;
-    sr.submissionId = r["submission_id"].get<long long>();
+    try
+    {
+        nlohmann::json r = nlohmann::json::parse(response);
+
+        if (r.contains("submission_id") && !r["submission_id"].is_null())
+        {
+            sr.submissionId = r["submission_id"].get<long long>();
+        }
+        else
+        {
+            throw std::runtime_error("Submission ID not found in response: " + response.substr(0, 200));
+        }
+    }
+    catch (const nlohmann::json::parse_error &)
+    {
+        throw std::runtime_error("Failed to parse submit response (likely non-JSON): " + response.substr(0, 200));
+    }
+
     return sr;
 }
 
@@ -247,10 +298,16 @@ submissionDetail getSubmitDetail(long long submissionId, std::string titleSlug)
 
     std::vector<std::string> headers;
     headers.push_back("Content-Type: application/json");
-    headers.push_back("Cookie: LEETCODE_SESSION=LOL; csrftoken=LOL");
-    headers.push_back("x-csrftoken:LOL");
+    headers.push_back("Cookie: LEETCODE_SESSION=SESSION_TOKEN_REDACTED; csrftoken=CSRF_TOKEN_REDACTED");
+    headers.push_back("x-csrftoken:CSRF_TOKEN_REDACTED");
+    headers.push_back("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
     headers.push_back("Referer: https://leetcode.com/problems/" + titleSlug + "/");
     headers.push_back("Origin: https://leetcode.com");
+    headers.push_back("Accept: */*");
+    headers.push_back("Accept-Language: en-US,en;q=0.9");
+    headers.push_back("sec-fetch-mode: cors");
+    headers.push_back("sec-fetch-site: same-origin");
+    headers.push_back("sec-fetch-dest: empty");
 
     const std::string url = "https://leetcode.com/graphql";
 
@@ -259,8 +316,18 @@ submissionDetail getSubmitDetail(long long submissionId, std::string titleSlug)
     j["query"] = "\n    query submissionDetails($submissionId: Int!) {\n  submissionDetails(submissionId: $submissionId) {\n    runtime\n    runtimeDisplay\n    runtimePercentile\n    runtimeDistribution\n    memory\n    memoryDisplay\n    memoryPercentile\n    memoryDistribution\n    code\n    timestamp\n    statusCode\n    aiJudgeMessage\n    isCompiledLang\n    aiRecheckSubmitted\n    user {\n      username\n      profile {\n        realName\n        userAvatar\n      }\n    }\n    lang {\n      name\n      verboseName\n    }\n    question {\n      questionId\n      titleSlug\n      hasFrontendPreview\n    }\n    notes\n    flagType\n    topicTags {\n      tagId\n      slug\n      name\n    }\n    runtimeError\n    compileError\n    lastTestcase\n    codeOutput\n    expectedOutput\n    totalCorrect\n    totalTestcases\n    fullCodeOutput\n    testDescriptions\n    testBodies\n    testInfo\n    stdOutput\n  }\n}\n    ";
     j["variables"]["submissionId"] = submissionId;
 
-    response = httpPost(url, j.dump(), headers);
+    std::string payload = j.dump();
+    response = httpPost(url, payload, headers);
+
+    logDebug("debug_detail.log", "DETAIL PAYLOAD", payload);
+    logDebug("debug_detail.log", "DETAIL RESPONSE", response);
+
     nlohmann::json r = nlohmann::json::parse(response);
+
+    if (!r.contains("data") || r["data"].is_null())
+    {
+        throw std::runtime_error("GraphQL error: 'data' field missing in response.");
+    }
 
     submissionDetail sd;
     auto &submissionDetails = r["data"]["submissionDetails"];
