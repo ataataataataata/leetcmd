@@ -231,17 +231,6 @@ questionDetail getQuestionDetail(std::string titleSlug)
     return qd;
 }
 
-void logDebug(const std::string &filename, const std::string &label, const std::string &content)
-{
-    std::ofstream file(filename, std::ios::app);
-    if (file.is_open())
-    {
-        file << "--- " << label << " ---" << std::endl;
-        file << content << std::endl;
-        file.close();
-    }
-}
-
 submitResponse submitCode(std::string titleSlug, std::string code, std::string langSlug, std::string questionId)
 {
     std::vector<std::string> tokens = readConfig();
@@ -258,9 +247,6 @@ submitResponse submitCode(std::string titleSlug, std::string code, std::string l
         if (isdigit(c))
             cleanId += c;
     }
-
-    std::cerr << "DEBUG: Attempting to submit. Raw ID: [" << questionId
-              << "], Cleaned ID: [" << cleanId << "]" << std::endl;
 
     if (cleanId.empty())
     {
@@ -283,10 +269,8 @@ submitResponse submitCode(std::string titleSlug, std::string code, std::string l
     j["typed_code"] = code;
 
     std::string payload = j.dump();
-    logDebug("debug_submit.log", "SUBMIT PAYLOAD", payload);
 
     response = httpPost(url, j.dump(), headers);
-    logDebug("debug_submit.log", "SUBMIT RESPONSE", response);
 
     submitResponse sr;
     try
@@ -344,9 +328,6 @@ submissionDetail getSubmitDetail(long long submissionId, std::string titleSlug)
     // --- HTTP Request ---
     std::string payload = j.dump();
     std::string response = httpPost(url, payload, headers);
-
-    logDebug("debug_detail.log", "DETAIL PAYLOAD", payload);
-    logDebug("debug_detail.log", "DETAIL RESPONSE", response);
 
     nlohmann::json r = nlohmann::json::parse(response);
 

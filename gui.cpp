@@ -444,6 +444,107 @@ Screen mainScreen()
     }
 }
 
+// Shows a small popup listing every language LeetCode provided a starter
+// snippet for on this question (mirrors the language dropdown on
+// leetcode.com), lets the user browse it with Up/Down, and returns the
+// index of the chosen entry in `snippets` (or -1 if the user cancelled
+// with Q/Esc). `currentIndex` is marked with a "> " so it's obvious which
+// language is currently loaded in the editor.
+static int selectLanguage(const std::vector<codeSnippet> &snippets, int currentIndex)
+{
+    if (snippets.empty())
+        return -1;
+
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+    int n = (int)snippets.size();
+
+    int boxWidth = 30;
+    for (auto &s : snippets)
+        boxWidth = std::max(boxWidth, (int)s.lang.size() + 8);
+    boxWidth = std::min(boxWidth, std::max(cols - 4, 20));
+
+    int listHeight = std::min(n, std::max(rows - 8, 3));
+    int boxHeight = std::min(listHeight + 4, rows - 2);
+    listHeight = boxHeight - 4;
+
+    int boxY = std::max(0, (rows - boxHeight) / 2);
+    int boxX = std::max(0, (cols - boxWidth) / 2);
+
+    WINDOW *win = newwin(boxHeight, boxWidth, boxY, boxX);
+    keypad(win, TRUE);
+
+    int highlight = (currentIndex >= 0 && currentIndex < n) ? currentIndex : 0;
+    int offset = 0;
+
+    auto draw = [&]()
+    {
+        werase(win);
+        wattron(win, COLOR_PAIR(PAIR_LOGO_CMD) | A_BOLD);
+        box(win, 0, 0);
+        std::string title = " Select Language ";
+        mvwprintw(win, 0, std::max(1, (boxWidth - (int)title.size()) / 2), "%s", title.c_str());
+        wattroff(win, COLOR_PAIR(PAIR_LOGO_CMD) | A_BOLD);
+
+        if (highlight < offset)
+            offset = highlight;
+        else if (highlight >= offset + listHeight)
+            offset = highlight - listHeight + 1;
+
+        for (int i = offset; i < offset + listHeight && i < n; i++)
+        {
+            int y = 1 + (i - offset);
+            bool isCurrent = (i == currentIndex);
+            std::string label = (isCurrent ? "> " : "  ") + snippets[i].lang;
+            if ((int)label.size() > boxWidth - 3)
+                label = label.substr(0, boxWidth - 3);
+
+            int attrs = (i == highlight) ? A_REVERSE : A_NORMAL;
+            if (isCurrent)
+                attrs |= A_BOLD;
+
+            wattron(win, attrs);
+            mvwprintw(win, y, 2, "%-*s", boxWidth - 3, label.c_str());
+            wattroff(win, attrs);
+        }
+
+        wattron(win, A_DIM);
+        mvwprintw(win, boxHeight - 2, 2, "%-*.*s", boxWidth - 4, boxWidth - 4,
+                  "Up/Down  Enter: Select  Q: Cancel");
+        wattroff(win, A_DIM);
+
+        wrefresh(win);
+    };
+
+    draw();
+    flushinp();
+    timeout(-1);
+
+    int chosen = -1;
+    while (true)
+    {
+        int c = wgetch(win);
+        if (c == KEY_UP)
+            highlight = (highlight - 1 + n) % n;
+        else if (c == KEY_DOWN)
+            highlight = (highlight + 1) % n;
+        else if (c == '\n' || c == KEY_ENTER)
+        {
+            chosen = highlight;
+            break;
+        }
+        else if (c == 'q' || c == 'Q' || c == 27) // Esc
+        {
+            chosen = -1;
+            break;
+        }
+        draw();
+    }
+
+    delwin(win);
+    return chosen;
+}
+
 // Renders the editable code buffer into codePad, auto-scrolling so the
 // cursor always stays visible, and draws a reverse-video block for the cursor.
 static void renderEditor(WINDOW *pad, Editor &ed, int visibleHeight)
@@ -518,6 +619,18 @@ Screen questionScreen()
         selectedLangSlug = q.codeSnippets[0].langSlug;
     }
 
+    // Tracks which entry of q.codeSnippets is currently loaded in the editor,
+    // so the language picker (L) can highlight/mark it.
+    int langIndex = 0;
+    for (size_t i = 0; i < q.codeSnippets.size(); i++)
+    {
+        if (q.codeSnippets[i].langSlug == selectedLangSlug)
+        {
+            langIndex = (int)i;
+            break;
+        }
+    }
+
     Editor ed;
     ed.loadText(codeText);
 
@@ -579,7 +692,7 @@ Screen questionScreen()
         prefresh(codePad, ed.scrollOffset, 0, 1, half + 1, winHeight - 2, cols - 2);
 
         attron(A_DIM);
-        mvprintw(rows - 1, 1, "TAB: Switch Panel | Arrows: Move/Scroll | Enter/Backspace: Edit | S: Submit | Q: Back");
+        mvprintw(rows - 1, 1, "TAB: Switch Panel | Arrows: Move/Scroll | Enter/Backspace: Edit | S: Submit | L: Language | Q: Back");
         attroff(A_DIM);
         refresh();
     };
@@ -626,6 +739,18 @@ Screen questionScreen()
 
                 return SCREEN_SUBMIT;
             }
+            else if (c == 'l' || c == 'L')
+            {
+                int choice = selectLanguage(q.codeSnippets, langIndex);
+                if (choice != -1 && choice != langIndex)
+                {
+                    langIndex = choice;
+                    const codeSnippet &snip = q.codeSnippets[langIndex];
+                    selectedLangSlug = snip.langSlug;
+                    ed.loadText(snip.code);
+                    setupWindows();
+                }
+            }
             else if (c == 'q' || c == 'Q')
             {
                 break;
@@ -660,6 +785,18 @@ Screen questionScreen()
             {
                 break;
             }
+            else if (c == 12) // Ctrl+L to switch language while editing
+            {
+                int choice = selectLanguage(q.codeSnippets, langIndex);
+                if (choice != -1 && choice != langIndex)
+                {
+                    langIndex = choice;
+                    const codeSnippet &snip = q.codeSnippets[langIndex];
+                    selectedLangSlug = snip.langSlug;
+                    ed.loadText(snip.code);
+                    setupWindows();
+                }
+            }
             else if (isprint(c))
                 ed.insertChar((char)c);
         }
@@ -675,38 +812,121 @@ Screen questionScreen()
     return SCREEN_MAIN;
 }
 
+// Maps a LeetCode submission statusCode to a short, human-readable verdict.
+// 10 Accepted, 11 Wrong Answer, 12 Memory Limit Exceeded, 13 Output Limit
+// Exceeded, 14 Time Limit Exceeded, 15 Runtime Error, 16 Internal Error,
+// 20 Compile Error - anything else falls back to "Unknown Error".
+static std::string verdictTitle(int statusCode)
+{
+    switch (statusCode)
+    {
+    case 10:
+        return "Accepted";
+    case 11:
+        return "Wrong Answer";
+    case 12:
+        return "Memory Limit Exceeded";
+    case 13:
+        return "Output Limit Exceeded";
+    case 14:
+        return "Time Limit Exceeded";
+    case 15:
+        return "Runtime Error";
+    case 16:
+        return "Internal Error";
+    case 20:
+        return "Compile Error";
+    default:
+        return "Unknown Error";
+    }
+}
+
+// Green for success, yellow for "resource limit" style failures (still ran,
+// just too slow/too much memory), red for everything else that failed outright.
+static int verdictColorPair(int statusCode)
+{
+    if (statusCode == 10)
+        return PAIR_SUBMIT_OK;
+    if (statusCode == 12 || statusCode == 13 || statusCode == 14)
+        return PAIR_MEDIUM;
+    return PAIR_SUBMIT_FAIL;
+}
+
+// Small ASCII progress bar used to visualize runtime/memory percentiles,
+// e.g. "[#############-----] 72%".
+static std::string percentileBar(double percentile, int width)
+{
+    if (width < 8)
+        width = 8;
+    int inner = width - 2;
+    int filled = (int)((percentile / 100.0) * inner + 0.5);
+    filled = std::max(0, std::min(inner, filled));
+
+    std::string bar = "[";
+    bar += std::string(filled, '#');
+    bar += std::string(inner - filled, '-');
+    bar += "] " + std::to_string((int)percentile) + "%";
+    return bar;
+}
+
+// Draws a small bordered status box with a spinner + message in the center
+// of the screen. Used both while the solution is uploading and while the
+// judge is running the test cases, so the user always sees clear feedback
+// instead of a frozen terminal.
+static void drawStatusBox(int rows, int cols, const std::string &message, int frame)
+{
+    static const char spinnerFrames[] = {'|', '/', '-', '\\'};
+
+    int boxWidth = std::min(cols - 4, 50);
+    int boxHeight = 5;
+    int boxY = std::max(0, (rows - boxHeight) / 2);
+    int boxX = std::max(0, (cols - boxWidth) / 2);
+
+    clear();
+
+    WINDOW *win = newwin(boxHeight, boxWidth, boxY, boxX);
+    wattron(win, COLOR_PAIR(PAIR_LOGO_CMD) | A_BOLD);
+    box(win, 0, 0);
+    mvwprintw(win, 0, std::max(1, (boxWidth - 9) / 2), " leetcmd ");
+    wattroff(win, COLOR_PAIR(PAIR_LOGO_CMD) | A_BOLD);
+
+    std::string line;
+    line += spinnerFrames[frame % 4];
+    line += "  " + message;
+    mvwprintw(win, boxHeight / 2, std::max(1, (boxWidth - (int)line.size()) / 2), "%s", line.c_str());
+
+    wrefresh(win);
+    delwin(win);
+}
+
 Screen submitScreen()
 {
-    clear();
-    refresh();
+    curs_set(0);
 
     int rows, cols;
     getmaxyx(stdscr, rows, cols);
 
-    // Simple "submitting" animation while the real request is in flight.
-    const char *frames[] = {".", "..", "...", "...."};
-    for (int i = 0; i < 4; i++)
+    int frame = 0;
+
+    // --- Phase 1: uploading the solution ---
+    for (int i = 0; i < 5; i++)
     {
-        clear();
-        mvprintw(rows / 2 - 1, (cols - 20) / 2, "Submitting%s", frames[i % 4]);
-        refresh();
-        napms(200);
+        drawStatusBox(rows, cols, "Uploading your solution...", frame++);
+        napms(120);
     }
 
     // --- Real submit + poll flow using leetcode_client.h ---
     bool accepted = false;
-    std::string verdict = "Error";
-    std::string runtimeInfo;
-    std::string memoryInfo;
-    std::string errorInfo;
+    int statusCode = -1;
+    std::string verdict = "Unknown Error";
+    std::string runtimeInfo, memoryInfo;
+    double runtimePercentile = -1.0, memoryPercentile = -1.0;
+    std::vector<std::string> detailLines; // pre-wrapped extra info (errors, WA input/output/expected)
 
     try
     {
         submitResponse sr = submitCode(selectedQuestionSlug, lastSubmittedCode,
                                        selectedLangSlug, selectedQuestionId);
-        std::ofstream idDbg("submission_id_debug.txt");
-        idDbg << sr.submissionId;
-        idDbg.close();
 
         // Any key the user mashes while waiting for the network/judge would
         // otherwise sit in the input queue and get consumed the instant the
@@ -714,64 +934,83 @@ Screen submitScreen()
         // and disappears immediately. Flush before the wait starts.
         flushinp();
 
-        // LeetCode's judge is async: poll getSubmitDetail until a verdict
-        // is available, showing the animation while we wait.
-        // LeetCode's judge system is asynchronous.
-        // A statusCode of 0 means the submission is still being processed (pending).
+        // LeetCode's judge is asynchronous: poll getSubmitDetail until a
+        // verdict is available (statusCode != 0 means judging has finished),
+        // showing an animated spinner while we wait instead of freezing.
         submissionDetail sd;
         const int maxAttempts = 20; // Increase this if you experience timeouts
         for (int attempt = 0; attempt < maxAttempts; attempt++)
         {
-            clear();
-            mvprintw(rows / 2 - 1, (cols - 20) / 2, "Judging%s", frames[attempt % 4]);
-            refresh();
+            std::string msg = "Running against test cases";
+            for (int d = 0; d <= attempt % 3; d++)
+                msg += ".";
+            drawStatusBox(rows, cols, msg, frame++);
 
             sd = getSubmitDetail(sr.submissionId, selectedQuestionSlug);
-
-            // If statusCode is not 0, judging has finished (e.g., 10 for Accepted,
-            // 11 for Wrong Answer, 14 for Compile Error, etc.).
-            mvprintw(0, 0, "DEBUG: Status %d", sd.statusCode);
             if (sd.statusCode != 0)
-            {
                 break;
-            }
 
             napms(1000); // Wait 1 second before polling again
             flushinp();
         }
 
-        accepted = (sd.statusCode == 10);
+        statusCode = sd.statusCode;
+        accepted = (statusCode == 10);
+        verdict = verdictTitle(statusCode);
 
-        if (accepted)
-        {
-            verdict = "Accepted";
+        int wrapWidth = std::min(cols - 8, 70);
+
+        if (statusCode == 11) // Wrong Answer: show the same Input/Output/Expected
+        {                     // breakdown LeetCode.com itself shows.
+            verdict += "  (" + std::to_string(sd.totalCorrect) + "/" +
+                       std::to_string(sd.totalTestcases) + " testcases passed)";
+
+            auto addSection = [&](const std::string &label, const std::string &content)
+            {
+                if (content.empty())
+                    return;
+                if (!detailLines.empty())
+                    detailLines.push_back("");
+                detailLines.push_back(label);
+                for (auto &l : wrapText(content, wrapWidth))
+                    detailLines.push_back("  " + l);
+            };
+            addSection("Input:", sd.lastTestcase);
+            addSection("Output:", sd.codeOutput);
+            addSection("Expected:", sd.expectedOutput);
         }
         else if (!sd.compileError.empty())
         {
-            verdict = "Compile Error";
-            errorInfo = sd.compileError;
+            detailLines.push_back("Compiler Output:");
+            for (auto &l : wrapText(sd.compileError, wrapWidth))
+                detailLines.push_back("  " + l);
         }
         else if (!sd.runtimeError.empty())
         {
-            verdict = "Runtime Error";
-            errorInfo = sd.runtimeError;
-        }
-        else
-        {
-            verdict = "Wrong Answer (" + std::to_string(sd.totalCorrect) + "/" + std::to_string(sd.totalTestcases) + ")";
+            detailLines.push_back("Runtime Output:");
+            for (auto &l : wrapText(sd.runtimeError, wrapWidth))
+                detailLines.push_back("  " + l);
+            if (!sd.lastTestcase.empty())
+            {
+                detailLines.push_back("");
+                detailLines.push_back("Last Input:");
+                for (auto &l : wrapText(sd.lastTestcase, wrapWidth))
+                    detailLines.push_back("  " + l);
+            }
         }
 
-        if (!sd.runtimeDisplay.empty())
+        if (accepted)
         {
-            runtimeInfo = "Runtime: " + sd.runtimeDisplay;
-            if (sd.runtimePercentile >= 0.0)
-                runtimeInfo += "  (faster than " + std::to_string((int)sd.runtimePercentile) + "%)";
-        }
-        if (!sd.memoryDisplay.empty())
-        {
-            memoryInfo = "Memory:  " + sd.memoryDisplay;
-            if (sd.memoryPercentile >= 0.0)
-                memoryInfo += "  (less than " + std::to_string((int)sd.memoryPercentile) + "%)";
+            if (!sd.runtimeDisplay.empty())
+            {
+                runtimeInfo = "Runtime: " + sd.runtimeDisplay;
+                runtimePercentile = sd.runtimePercentile;
+            }
+            if (!sd.memoryDisplay.empty())
+            {
+                memoryInfo = "Memory:  " + sd.memoryDisplay;
+                memoryPercentile = sd.memoryPercentile;
+            }
         }
     }
     catch (const std::exception &e)
@@ -782,39 +1021,100 @@ Screen submitScreen()
         exit(0);
     }
 
+    // --- Result screen ---
     clear();
+    refresh();
+    getmaxyx(stdscr, rows, cols);
 
-    int boxWidth = std::min(cols - 4, 64);
-    int boxHeight = errorInfo.empty() ? 8 : 12;
+    int colorPair = verdictColorPair(statusCode);
+
+    int boxWidth = std::min(cols - 4, 78);
+    int boxHeight = std::max(10, std::min(rows - 2, 22));
     int boxY = std::max(0, (rows - boxHeight) / 2);
     int boxX = std::max(0, (cols - boxWidth) / 2);
 
     WINDOW *resultWin = newwin(boxHeight, boxWidth, boxY, boxX);
     keypad(resultWin, TRUE);
-    int colorPair = accepted ? PAIR_SUBMIT_OK : PAIR_SUBMIT_FAIL;
+
+    // Every string printed into resultWin goes through this helper so a long
+    // verdict/runtime/percentile line can never overflow the window's right
+    // border. Unclipped mvwprintw calls previously wrapped onto the next
+    // physical row inside the window and visually collided with whatever
+    // was printed there next (e.g. the memory line eating into the runtime
+    // percentile line).
+    auto printClipped = [&](int y, int x, const std::string &text)
+    {
+        int maxLen = std::max(0, boxWidth - x - 1);
+        std::string clipped = (int)text.size() > maxLen ? text.substr(0, maxLen) : text;
+        mvwprintw(resultWin, y, x, "%s", clipped.c_str());
+    };
 
     wattron(resultWin, COLOR_PAIR(colorPair) | A_BOLD);
     box(resultWin, 0, 0);
-    mvwprintw(resultWin, 1, std::max(1, (boxWidth - (int)verdict.size()) / 2), "%s", verdict.c_str());
+    printClipped(1, std::max(1, (boxWidth - (int)verdict.size()) / 2), verdict);
     wattroff(resultWin, COLOR_PAIR(colorPair) | A_BOLD);
 
     int line = 3;
-    if (!runtimeInfo.empty())
-        mvwprintw(resultWin, line++, 2, "%s", runtimeInfo.c_str());
-    if (!memoryInfo.empty())
-        mvwprintw(resultWin, line++, 2, "%s", memoryInfo.c_str());
-
-    if (!errorInfo.empty())
+    if (accepted)
     {
-        // Wrap the error text so it doesn't overflow the box width.
-        std::vector<std::string> wrapped = wrapText(errorInfo, boxWidth - 4);
-        for (size_t i = 0; i < wrapped.size() && line < boxHeight - 2; i++, line++)
-            mvwprintw(resultWin, line, 2, "%s", wrapped[i].c_str());
+        if (!runtimeInfo.empty())
+        {
+            printClipped(line++, 2, runtimeInfo);
+            if (runtimePercentile >= 0.0)
+            {
+                std::string suffix = " faster";
+                int barWidth = std::max(8, boxWidth - 4 - 2 - (int)suffix.size());
+                wattron(resultWin, A_DIM);
+                printClipped(line++, 2, "  " + percentileBar(runtimePercentile, barWidth) + suffix);
+                wattroff(resultWin, A_DIM);
+            }
+        }
+        if (!memoryInfo.empty())
+        {
+            printClipped(line++, 2, memoryInfo);
+            if (memoryPercentile >= 0.0)
+            {
+                std::string suffix = " less mem";
+                int barWidth = std::max(8, boxWidth - 4 - 2 - (int)suffix.size());
+                wattron(resultWin, A_DIM);
+                printClipped(line++, 2, "  " + percentileBar(memoryPercentile, barWidth) + suffix);
+                wattroff(resultWin, A_DIM);
+            }
+        }
+        line++;
     }
 
-    mvwprintw(resultWin, boxHeight - 2, 2, "Press any key to return...");
+    // Scrollable detail area (compile/runtime output, or WA input/output/expected)
+    // so long payloads never get clipped -- they're just scrolled with arrows.
+    int detailAreaTop = line;
+    int detailAreaHeight = std::max(1, boxHeight - detailAreaTop - 2);
+    int detailPadHeight = std::max((int)detailLines.size(), 1);
 
-    wrefresh(resultWin);
+    WINDOW *detailPad = newpad(detailPadHeight, std::max(boxWidth - 4, 1));
+    for (int i = 0; i < (int)detailLines.size(); i++)
+        mvwprintw(detailPad, i, 0, "%s", detailLines[i].c_str());
+
+    int detailScroll = 0;
+    bool scrollable = (int)detailLines.size() > detailAreaHeight;
+    std::string footerText = scrollable
+                                  ? "Up/Down: Scroll  |  Any other key: Return"
+                                  : "Press any key to return...";
+
+    auto renderResult = [&]()
+    {
+        mvwprintw(resultWin, boxHeight - 2, 2, "%*s", boxWidth - 4, "");
+        wattron(resultWin, A_DIM);
+        mvwprintw(resultWin, boxHeight - 2, 2, "%s", footerText.c_str());
+        wattroff(resultWin, A_DIM);
+        wrefresh(resultWin);
+
+        pnoutrefresh(detailPad, detailScroll, 0,
+                     boxY + detailAreaTop, boxX + 2,
+                     boxY + detailAreaTop + detailAreaHeight - 1, boxX + boxWidth - 3);
+        doupdate();
+    };
+
+    renderResult();
 
     // Guarantee the result box actually stays on screen until the user
     // deliberately presses something. flushinp() drops anything that was
@@ -824,12 +1124,32 @@ Screen submitScreen()
     flushinp();
     timeout(-1);
 
-    int key;
-    do
+    while (true)
     {
-        key = wgetch(resultWin);
-    } while (key == ERR || key == KEY_RESIZE);
+        int key = wgetch(resultWin);
+        if (key == ERR || key == KEY_RESIZE)
+            continue;
 
+        if (key == KEY_UP && detailScroll > 0)
+        {
+            detailScroll--;
+            renderResult();
+            continue;
+        }
+        if (key == KEY_DOWN)
+        {
+            int maxScroll = std::max(0, detailPadHeight - detailAreaHeight);
+            if (detailScroll < maxScroll)
+            {
+                detailScroll++;
+                renderResult();
+                continue;
+            }
+        }
+        break;
+    }
+
+    delwin(detailPad);
     delwin(resultWin);
     return SCREEN_QUESTION;
 }
