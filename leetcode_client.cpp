@@ -312,14 +312,14 @@ submitResponse submitCode(std::string titleSlug, std::string code, std::string l
 
 submissionDetail getSubmitDetail(long long submissionId, std::string titleSlug)
 {
+    // --- Configuration and Header Setup ---
     std::vector<std::string> tokens = readConfig();
     std::string leetcode_session = tokens[0];
     std::string csrftoken = tokens[1];
 
     std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
     std::string csrftoken_header = "x-csrftoken: " + csrftoken;
-    std::string response;
-
+    
     std::vector<std::string> headers;
     headers.push_back("Content-Type: application/json");
     headers.push_back(token_header);
@@ -335,74 +335,80 @@ submissionDetail getSubmitDetail(long long submissionId, std::string titleSlug)
 
     const std::string url = "https://leetcode.com/graphql";
 
+    // --- Prepare Payload ---
     nlohmann::json j;
     j["operationName"] = "submissionDetails";
     j["query"] = "\n    query submissionDetails($submissionId: Int!) {\n  submissionDetails(submissionId: $submissionId) {\n    runtime\n    runtimeDisplay\n    runtimePercentile\n    runtimeDistribution\n    memory\n    memoryDisplay\n    memoryPercentile\n    memoryDistribution\n    code\n    timestamp\n    statusCode\n    aiJudgeMessage\n    isCompiledLang\n    aiRecheckSubmitted\n    user {\n      username\n      profile {\n        realName\n        userAvatar\n      }\n    }\n    lang {\n      name\n      verboseName\n    }\n    question {\n      questionId\n      titleSlug\n      hasFrontendPreview\n    }\n    notes\n    flagType\n    topicTags {\n      tagId\n      slug\n      name\n    }\n    runtimeError\n    compileError\n    lastTestcase\n    codeOutput\n    expectedOutput\n    totalCorrect\n    totalTestcases\n    fullCodeOutput\n    testDescriptions\n    testBodies\n    testInfo\n    stdOutput\n  }\n}\n    ";
     j["variables"]["submissionId"] = submissionId;
 
+    // --- HTTP Request ---
     std::string payload = j.dump();
-    response = httpPost(url, payload, headers);
+    std::string response = httpPost(url, payload, headers);
 
     logDebug("debug_detail.log", "DETAIL PAYLOAD", payload);
     logDebug("debug_detail.log", "DETAIL RESPONSE", response);
 
     nlohmann::json r = nlohmann::json::parse(response);
 
-    if (!r.contains("data") || r["data"].is_null())
+    // --- Safety Check: Ensure 'data' exists ---
+    if (!r.contains("data") || r["data"].is_null() || !r["data"].contains("submissionDetails") || r["data"]["submissionDetails"].is_null())
     {
-        throw std::runtime_error("GraphQL error: 'data' field missing in response.");
+        submissionDetail sd;
+        sd.statusCode = 0; // Treat as pending
+        return sd;
     }
 
+    auto &details = r["data"]["submissionDetails"];
     submissionDetail sd;
-    auto &submissionDetails = r["data"]["submissionDetails"];
 
-    sd.statusCode = (submissionDetails.contains("statusCode") && !submissionDetails["statusCode"].is_null())
-                        ? submissionDetails["statusCode"].get<int>()
-                        : 0;
+    // --- Safe Data Extraction ---
 
-    sd.totalCorrect = (submissionDetails.contains("totalCorrect") && !submissionDetails["totalCorrect"].is_null())
-                          ? submissionDetails["totalCorrect"].get<int>()
-                          : 0;
+    // 1. Status Code
+    sd.statusCode = (details.contains("statusCode") && !details["statusCode"].is_null())
+                        ? details["statusCode"].get<int>() : 0;
 
-    sd.totalTestcases = (submissionDetails.contains("totalTestcases") && !submissionDetails["totalTestcases"].is_null())
-                            ? submissionDetails["totalTestcases"].get<int>()
-                            : 0;
+    // 2. Total Correct (With Pending Logic)
+    if (details.contains("totalCorrect") && !details["totalCorrect"].is_null())
+    {
+        sd.totalCorrect = details["totalCorrect"].get<int>();
+    }
+    else
+    {
+        sd.totalCorrect = 0;
+        sd.statusCode = 0; // If totalCorrect is null, force status 0 to keep polling
+    }
 
-    sd.runtimeDisplay = (submissionDetails.contains("runtimeDisplay") && !submissionDetails["runtimeDisplay"].is_null())
-                            ? submissionDetails["runtimeDisplay"].get<std::string>()
-                            : "";
+    // 3. Other Numeric Fields
+    sd.totalTestcases = (details.contains("totalTestcases") && !details["totalTestcases"].is_null())
+                            ? details["totalTestcases"].get<int>() : 0;
+    
+    sd.runtimePercentile = (details.contains("runtimePercentile") && !details["runtimePercentile"].is_null())
+                               ? details["runtimePercentile"].get<double>() : -1.0;
+    
+    sd.memoryPercentile = (details.contains("memoryPercentile") && !details["memoryPercentile"].is_null())
+                              ? details["memoryPercentile"].get<double>() : -1.0;
 
-    sd.runtimePercentile = (submissionDetails.contains("runtimePercentile") && !submissionDetails["runtimePercentile"].is_null())
-                               ? submissionDetails["runtimePercentile"].get<double>()
-                               : -1.0;
-
-    sd.memoryDisplay = (submissionDetails.contains("memoryDisplay") && !submissionDetails["memoryDisplay"].is_null())
-                           ? submissionDetails["memoryDisplay"].get<std::string>()
-                           : "";
-
-    sd.memoryPercentile = (submissionDetails.contains("memoryPercentile") && !submissionDetails["memoryPercentile"].is_null())
-                              ? submissionDetails["memoryPercentile"].get<double>()
-                              : -1.0;
-
-    sd.compileError = (submissionDetails.contains("compileError") && !submissionDetails["compileError"].is_null())
-                          ? submissionDetails["compileError"].get<std::string>()
-                          : "";
-
-    sd.runtimeError = (submissionDetails.contains("runtimeError") && !submissionDetails["runtimeError"].is_null())
-                          ? submissionDetails["runtimeError"].get<std::string>()
-                          : "";
-
-    sd.lastTestcase = (submissionDetails.contains("lastTestcase") && !submissionDetails["lastTestcase"].is_null())
-                          ? submissionDetails["lastTestcase"].get<std::string>()
-                          : "";
-
-    sd.codeOutput = (submissionDetails.contains("codeOutput") && !submissionDetails["codeOutput"].is_null())
-                        ? submissionDetails["codeOutput"].get<std::string>()
-                        : "";
-
-    sd.expectedOutput = (submissionDetails.contains("expectedOutput") && !submissionDetails["expectedOutput"].is_null())
-                            ? submissionDetails["expectedOutput"].get<std::string>()
-                            : "";
+    // 4. String Fields
+    sd.runtimeDisplay = (details.contains("runtimeDisplay") && !details["runtimeDisplay"].is_null())
+                            ? details["runtimeDisplay"].get<std::string>() : "";
+    
+    sd.memoryDisplay = (details.contains("memoryDisplay") && !details["memoryDisplay"].is_null())
+                           ? details["memoryDisplay"].get<std::string>() : "";
+    
+    sd.compileError = (details.contains("compileError") && !details["compileError"].is_null())
+                          ? details["compileError"].get<std::string>() : "";
+    
+    sd.runtimeError = (details.contains("runtimeError") && !details["runtimeError"].is_null())
+                          ? details["runtimeError"].get<std::string>() : "";
+    
+    sd.lastTestcase = (details.contains("lastTestcase") && !details["lastTestcase"].is_null())
+                          ? details["lastTestcase"].get<std::string>() : "";
+    
+    sd.codeOutput = (details.contains("codeOutput") && !details["codeOutput"].is_null())
+                        ? details["codeOutput"].get<std::string>() : "";
+    
+    sd.expectedOutput = (details.contains("expectedOutput") && !details["expectedOutput"].is_null())
+                            ? details["expectedOutput"].get<std::string>() : "";
 
     return sd;
 }

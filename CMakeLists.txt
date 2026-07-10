@@ -12,7 +12,13 @@ add_executable(leetcmd main.cpp
         include/http_client.h
         include/credits.h
         leetcode_client.cpp
-        include/leetcode_client.h)
+        include/leetcode_client.h
+        include/config_manager.h
+        config_manager.cpp
+        include/gui.h
+        gui.cpp
+        include/html_parser.h
+        html_parser.cpp)
 
 include_directories(${CURSES_INCLUDE_DIR})
 target_link_libraries(leetcmd PRIVATE CURL::libcurl ${CURSES_LIBRARIES} nlohmann_json::nlohmann_json)

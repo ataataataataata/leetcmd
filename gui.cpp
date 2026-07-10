@@ -46,8 +46,13 @@ void initColors()
     init_pair(PAIR_SUBMIT_OK, COLOR_GREEN, -1);
     init_pair(PAIR_SUBMIT_FAIL, COLOR_RED, -1);
 
-    init_pair(PAIR_CONFIG_BORDER, COLOR_CYAN, -1);
-    init_pair(PAIR_CONFIG_LABEL, COLOR_YELLOW, -1);
+    // Config screen now themed with the same leet(orange)/cmd(cyan) palette
+    // used by the logo, instead of its own separate colors.
+    if (COLORS >= 256)
+        init_pair(PAIR_CONFIG_BORDER, 208, -1);
+    else
+        init_pair(PAIR_CONFIG_BORDER, COLOR_YELLOW, -1);
+    init_pair(PAIR_CONFIG_LABEL, COLOR_CYAN, -1);
 }
 
 int difficultyColorPair(const std::string &difficulty)
@@ -151,51 +156,145 @@ void drawLogo()
 }
 
 // Reads a single line of input into a bordered field at the given window
-// coordinates, using ncurses' built-in line editing (getnstr). The cursor
-// is made visible for the duration of the call and restored afterward.
-static std::string promptField(WINDOW *win, int y, int x)
+// coordinates. Unlike the old getnstr()-based version, this scrolls the
+// visible text horizontally so tokens longer than the field width (LeetCode
+// session cookies routinely run 100+ chars) never overflow past the box
+// border. Left/Right arrows move the cursor, Backspace deletes, Enter
+// confirms. The cursor is made visible for the duration of the call and
+// restored afterward.
+static std::string promptFieldScrolling(WINDOW *win, int y, int x, int fieldWidth)
 {
-    char buf[2048];
+    if (fieldWidth < 1)
+        fieldWidth = 1;
+
+    std::string input;
+    int pos = 0;       // cursor position within input
+    int scrollOff = 0; // index of first visible character
 
     curs_set(1);
-    echo();
+    keypad(win, TRUE);
 
-    wmove(win, y, x);
-    wrefresh(win);
+    auto redraw = [&]()
+    {
+        if (pos < scrollOff)
+            scrollOff = pos;
+        else if (pos - scrollOff >= fieldWidth)
+            scrollOff = pos - fieldWidth + 1;
+        if (scrollOff < 0)
+            scrollOff = 0;
 
-    wgetnstr(win, buf, sizeof(buf) - 1);
+        // Clear the field area first so shorter re-renders don't leave
+        // stray characters from a previous, longer render.
+        mvwprintw(win, y, x, "%*s", fieldWidth, "");
+
+        int visibleLen = std::min((int)input.size() - scrollOff, fieldWidth);
+        if (visibleLen < 0)
+            visibleLen = 0;
+        std::string visible = input.substr(scrollOff, visibleLen);
+
+        mvwprintw(win, y, x, "%s", visible.c_str());
+        wmove(win, y, x + (pos - scrollOff));
+        wrefresh(win);
+    };
+
+    redraw();
+
+    int ch;
+    while ((ch = wgetch(win)) != '\n' && ch != KEY_ENTER)
+    {
+        if (ch == KEY_BACKSPACE || ch == 127 || ch == 8)
+        {
+            if (pos > 0)
+            {
+                input.erase(pos - 1, 1);
+                pos--;
+            }
+        }
+        else if (ch == KEY_DC) // Delete key
+        {
+            if (pos < (int)input.size())
+                input.erase(pos, 1);
+        }
+        else if (ch == KEY_LEFT)
+        {
+            if (pos > 0)
+                pos--;
+        }
+        else if (ch == KEY_RIGHT)
+        {
+            if (pos < (int)input.size())
+                pos++;
+        }
+        else if (ch == KEY_HOME)
+        {
+            pos = 0;
+        }
+        else if (ch == KEY_END)
+        {
+            pos = (int)input.size();
+        }
+        else if (isprint(ch))
+        {
+            input.insert(input.begin() + pos, (char)ch);
+            pos++;
+        }
+
+        redraw();
+    }
 
     noecho();
     curs_set(0);
-
-    return std::string(buf);
+    return input;
 }
 
 // Shown once on startup when no config file exists yet. Collects the
 // LeetCode session cookie and CSRF token needed to authenticate requests,
 // then persists them via createConfig() so the user isn't asked again.
+// Styled with the same leet(orange)/cmd(cyan) palette as the main logo,
+// and uses promptFieldScrolling so long tokens never wrap past the border.
 void configScreen()
 {
     clear();
     refresh();
+    noecho();
 
     int rows, cols;
     getmaxyx(stdscr, rows, cols);
 
-    int boxWidth = std::min(cols - 4, 70);
-    int boxHeight = 12;
+    int boxWidth = std::min(cols - 4, 76);
+    int boxHeight = 13;
     int boxY = std::max(0, (rows - boxHeight) / 2);
     int boxX = std::max(0, (cols - boxWidth) / 2);
 
     WINDOW *win = newwin(boxHeight, boxWidth, boxY, boxX);
     keypad(win, TRUE);
 
-    wattron(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
-    box(win, 0, 0);
+    auto drawChrome = [&]()
+    {
+        wattron(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
+        box(win, 0, 0);
+        wattroff(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
 
-    std::string title = "leetcmd — First-Time Setup";
-    mvwprintw(win, 0, std::max(1, (boxWidth - (int)title.size()) / 2 - 1), " %s ", title.c_str());
-    wattroff(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
+        std::string leet = "leet";
+        std::string cmd = "cmd";
+        std::string suffix = " — First-Time Setup ";
+        int totalLen = (int)(leet.size() + cmd.size() + suffix.size());
+        int titleX = std::max(1, (boxWidth - totalLen) / 2);
+
+        wattron(win, COLOR_PAIR(PAIR_LOGO_LEET) | A_BOLD);
+        mvwprintw(win, 0, titleX, "%s", leet.c_str());
+        wattroff(win, COLOR_PAIR(PAIR_LOGO_LEET) | A_BOLD);
+
+        wattron(win, COLOR_PAIR(PAIR_LOGO_CMD) | A_BOLD);
+        wprintw(win, "%s", cmd.c_str());
+        wattroff(win, COLOR_PAIR(PAIR_LOGO_CMD) | A_BOLD);
+
+        wattron(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
+        wprintw(win, "%s", suffix.c_str());
+        wattroff(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
+    };
+
+    drawChrome();
 
     std::vector<std::string> intro = wrapText(
         "No LeetCode credentials were found. Please provide your session "
@@ -210,6 +309,10 @@ void configScreen()
 
     line += 1;
 
+    int labelWidth = 18; // "LEETCODE_SESSION:" is the longer of the two labels
+    int fieldX = 2 + labelWidth + 1;
+    int fieldWidth = std::max(boxWidth - fieldX - 2, 10);
+
     wattron(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
     mvwprintw(win, line, 2, "LEETCODE_SESSION:");
     wattroff(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
@@ -223,15 +326,27 @@ void configScreen()
 
     wrefresh(win);
 
-    std::string session = promptField(win, sessionRow, 20);
+    std::string session = promptFieldScrolling(win, sessionRow, fieldX, fieldWidth);
 
-    wattron(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
-    box(win, 0, 0);
-    mvwprintw(win, 0, std::max(1, (boxWidth - (int)title.size()) / 2 - 1), " %s ", title.c_str());
-    wattroff(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
+    drawChrome();
+    for (auto &l : intro)
+        ; // intro text is static; no need to redraw between fields other than chrome
+    // Redraw both labels since drawChrome() only repaints the border/title.
+    wattron(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
+    mvwprintw(win, sessionRow, 2, "LEETCODE_SESSION:");
+    mvwprintw(win, csrfRow, 2, "csrftoken:");
+    wattroff(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
+    // Re-print the already-entered session value (truncated/scrolled view)
+    // so it stays visible while the user fills in the csrf field.
+    {
+        std::string visible = session.size() > (size_t)fieldWidth
+                                  ? session.substr(session.size() - fieldWidth)
+                                  : session;
+        mvwprintw(win, sessionRow, fieldX, "%s", visible.c_str());
+    }
     wrefresh(win);
 
-    std::string csrf = promptField(win, csrfRow, 12);
+    std::string csrf = promptFieldScrolling(win, csrfRow, fieldX, fieldWidth);
 
     createConfig(session, csrf);
 
@@ -240,6 +355,7 @@ void configScreen()
     wattroff(win, COLOR_PAIR(PAIR_SUBMIT_OK) | A_BOLD);
     wrefresh(win);
 
+    flushinp();
     timeout(-1);
     wgetch(win);
 
@@ -592,23 +708,36 @@ Screen submitScreen()
         idDbg << sr.submissionId;
         idDbg.close();
 
+        // Any key the user mashes while waiting for the network/judge would
+        // otherwise sit in the input queue and get consumed the instant the
+        // result screen calls getch(), making it look like the box flashes
+        // and disappears immediately. Flush before the wait starts.
+        flushinp();
+
         // LeetCode's judge is async: poll getSubmitDetail until a verdict
         // is available, showing the animation while we wait.
+        // LeetCode's judge system is asynchronous.
+        // A statusCode of 0 means the submission is still being processed (pending).
         submissionDetail sd;
-        const int maxAttempts = 15;
+        const int maxAttempts = 20; // Increase this if you experience timeouts
         for (int attempt = 0; attempt < maxAttempts; attempt++)
         {
             clear();
             mvprintw(rows / 2 - 1, (cols - 20) / 2, "Judging%s", frames[attempt % 4]);
             refresh();
-            napms(1500);
 
             sd = getSubmitDetail(sr.submissionId, selectedQuestionSlug);
 
-            // statusCode == 10 means "Accepted" in LeetCode's API; any other
-            // non-zero code means judging finished with some other verdict.
+            // If statusCode is not 0, judging has finished (e.g., 10 for Accepted,
+            // 11 for Wrong Answer, 14 for Compile Error, etc.).
+            mvprintw(0, 0, "DEBUG: Status %d", sd.statusCode);
             if (sd.statusCode != 0)
+            {
                 break;
+            }
+
+            napms(1000); // Wait 1 second before polling again
+            flushinp();
         }
 
         accepted = (sd.statusCode == 10);
@@ -661,6 +790,7 @@ Screen submitScreen()
     int boxX = std::max(0, (cols - boxWidth) / 2);
 
     WINDOW *resultWin = newwin(boxHeight, boxWidth, boxY, boxX);
+    keypad(resultWin, TRUE);
     int colorPair = accepted ? PAIR_SUBMIT_OK : PAIR_SUBMIT_FAIL;
 
     wattron(resultWin, COLOR_PAIR(colorPair) | A_BOLD);
@@ -685,9 +815,20 @@ Screen submitScreen()
     mvwprintw(resultWin, boxHeight - 2, 2, "Press any key to return...");
 
     wrefresh(resultWin);
+
+    // Guarantee the result box actually stays on screen until the user
+    // deliberately presses something. flushinp() drops anything that was
+    // queued up during the submit/judging wait, and the loop below ignores
+    // ERR (no key ready) and KEY_RESIZE so a stray terminal resize event
+    // can't be mistaken for "return to question" input.
     flushinp();
     timeout(-1);
-    getch(); // any key returns to the question screen
+
+    int key;
+    do
+    {
+        key = wgetch(resultWin);
+    } while (key == ERR || key == KEY_RESIZE);
 
     delwin(resultWin);
     return SCREEN_QUESTION;

@@ -1,8 +1,9 @@
 #include <ncurses.h>
 #include "include/leetcode_client.h"
-
+#include "include/gui.h"
 
 
 int main() {
-    printGetAllQuestions();
+    
+    return run_menu();
 }
