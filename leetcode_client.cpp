@@ -1,15 +1,22 @@
 #include "include/leetcode_client.h"
 #include "include/http_client.h"
-#include <fstream>
+#include "include/config_manager.h"
 
 std::vector<questionAtList> getAllQuestions()
 {
+    std::vector<std::string> tokens = readConfig();
+    std::string leetcode_session = tokens[0];
+    std::string csrftoken = tokens[1];
+
+    std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
+    std::string csrftoken_header = "x-csrftoken: " + csrftoken;
+
     std::string response;
 
     std::vector<std::string> headers;
     headers.push_back("Content-Type: application/json");
-    headers.push_back("Cookie: LEETCODE_SESSION=SESSION_TOKEN_REDACTED; csrftoken=CSRF_TOKEN_REDACTED");
-    headers.push_back("x-csrftoken:CSRF_TOKEN_REDACTED");
+    headers.push_back(token_header);
+    headers.push_back(csrftoken_header);
     headers.push_back("Referer: https://leetcode.com/problemset/");
     headers.push_back("Origin: https://leetcode.com");
 
@@ -25,7 +32,7 @@ std::vector<questionAtList> getAllQuestions()
     for (auto &q : questions)
     {
         questionAtList question;
-        
+
         question.id = q["questionFrontendId"].is_string()
                           ? q["questionFrontendId"].get<std::string>()
                           : std::to_string(q["questionFrontendId"].get<int>());
@@ -45,13 +52,18 @@ std::vector<questionAtList> getAllQuestions()
 
 questionDetail getQuestionDetail(std::string titleSlug)
 {
+    std::vector<std::string> tokens = readConfig();
+    std::string leetcode_session = tokens[0];
+    std::string csrftoken = tokens[1];
 
+    std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
+    std::string csrftoken_header = "x-csrftoken: " + csrftoken;
     std::string response;
 
     std::vector<std::string> headers;
     headers.push_back("Content-Type: application/json");
-    headers.push_back("Cookie: LEETCODE_SESSION=SESSION_TOKEN_REDACTED; csrftoken=CSRF_TOKEN_REDACTED");
-    headers.push_back("x-csrftoken:CSRF_TOKEN_REDACTED");
+    headers.push_back(token_header);
+    headers.push_back(csrftoken_header);
     headers.push_back("Referer: https://leetcode.com/problemset/");
     headers.push_back("Origin: https://leetcode.com");
 
@@ -232,6 +244,12 @@ void logDebug(const std::string &filename, const std::string &label, const std::
 
 submitResponse submitCode(std::string titleSlug, std::string code, std::string langSlug, std::string questionId)
 {
+    std::vector<std::string> tokens = readConfig();
+    std::string leetcode_session = tokens[0];
+    std::string csrftoken = tokens[1];
+
+    std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
+    std::string csrftoken_header = "x-csrftoken: " + csrftoken;
     std::string response;
 
     std::string cleanId = "";
@@ -251,8 +269,8 @@ submitResponse submitCode(std::string titleSlug, std::string code, std::string l
 
     std::vector<std::string> headers;
     headers.push_back("Content-Type: application/json");
-    headers.push_back("Cookie: LEETCODE_SESSION=SESSION_TOKEN_REDACTED ; csrftoken=CSRF_TOKEN_REDACTED");
-    headers.push_back("x-csrftoken:CSRF_TOKEN_REDACTED");
+    headers.push_back(token_header);
+    headers.push_back(csrftoken_header);
     headers.push_back("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
     headers.push_back("Referer: https://leetcode.com/problems/" + titleSlug + "/");
     headers.push_back("Origin: https://leetcode.com");
@@ -294,12 +312,18 @@ submitResponse submitCode(std::string titleSlug, std::string code, std::string l
 
 submissionDetail getSubmitDetail(long long submissionId, std::string titleSlug)
 {
+    std::vector<std::string> tokens = readConfig();
+    std::string leetcode_session = tokens[0];
+    std::string csrftoken = tokens[1];
+
+    std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
+    std::string csrftoken_header = "x-csrftoken: " + csrftoken;
     std::string response;
 
     std::vector<std::string> headers;
     headers.push_back("Content-Type: application/json");
-    headers.push_back("Cookie: LEETCODE_SESSION=SESSION_TOKEN_REDACTED; csrftoken=CSRF_TOKEN_REDACTED");
-    headers.push_back("x-csrftoken:CSRF_TOKEN_REDACTED");
+    headers.push_back(token_header);
+    headers.push_back(csrftoken_header);
     headers.push_back("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
     headers.push_back("Referer: https://leetcode.com/problems/" + titleSlug + "/");
     headers.push_back("Origin: https://leetcode.com");
