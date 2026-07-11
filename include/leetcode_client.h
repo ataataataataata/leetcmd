@@ -175,6 +175,40 @@ struct QuestionPage
     int totalLength;
 };
 
+struct globalData
+{
+    int userId;
+
+    bool isSignedIn;
+    bool isMockUser;
+    bool isPremium;
+    bool isVerified;
+    bool isAdmin;
+    bool isSuperuser;
+    bool isTranslator;
+
+    std::string premiumCountryCode;
+
+    std::string username;
+    std::string realName;
+    std::string avatar;
+
+    std::vector<std::string> permissions;
+    std::vector<std::string> completedFeatureGuides;
+
+    int activeSessionId;
+
+    bool checkedInToday;
+
+    long long premiumExpiredAt;
+
+    struct NotificationStatus
+    {
+        long long lastModified;
+        int numUnread;
+    } notificationStatus;
+};
+
 std::vector<questionAtList> getAllQuestions();
 QuestionPage getQuestions(int skip, int limit = 100);
 void printGetAllQuestions();
@@ -184,5 +218,7 @@ submitResponse submitCode(std::string titleSlug, std::string code, std::string l
 submissionDetail getSubmitDetail(long long submissionId, std::string titleSlug);
 runResponse runCode(std::string data_input, std::string lang, std::string questionId, std::string typedCode, std::string titleSlug);
 runDetail getRunDetail(std::string interpret_id, std::string titleSlug);
+QuestionPage searchQuestions(int skip, int limit, std::string questionName);
+globalData getglobalData();
 
 #endif // LEETCMD_LEETCODE_CLIENT_H

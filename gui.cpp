@@ -680,6 +680,124 @@ static std::string promptFieldScrolling(WINDOW *win, int y, int x, int fieldWidt
     return input;
 }
 
+// '/' ile açılan tek satırlık arama kutusu. Logonun hemen altında, config
+// kutusuyla aynı leet(border)/cmd(label) paletini kullanan küçük bir
+// popup olarak çizilir. promptFieldScrolling'den farkı: burada ESC ile
+// iptal edilebilir, çünkü aramada "vazgeçip mevcut listeye dön" mantıklı
+// bir davranış -- config ekranında ise kimlik bilgisi girmeden çıkış
+// yoktu zaten. `initial` ile kutu önceki arama terimiyle önceden dolu
+// açılır, böylece kullanıcı terimi düzeltmek için baştan yazmak zorunda
+// kalmaz. `cancelled` true dönerse çağıran taraf hiçbir state değiştirmez.
+static std::string searchPromptBox(const std::string &initial, bool &cancelled)
+{
+    cancelled = false;
+
+    int boxWidth = std::min(COLS - 4, 50);
+    int boxHeight = 3;
+    int boxY = LOGO_HEIGHT;
+    int boxX = std::max(0, (COLS - boxWidth) / 2);
+
+    WINDOW *win = newwin(boxHeight, boxWidth, boxY, boxX);
+    keypad(win, TRUE);
+
+    wattron(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
+    box(win, 0, 0);
+    wattroff(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
+
+    wattron(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
+    mvwprintw(win, 0, 2, " Search ");
+    wattroff(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
+
+    int fieldX = 1;
+    int fieldWidth = boxWidth - 2;
+
+    std::string input = initial;
+    int pos = (int)input.size();
+    int scrollOff = 0;
+
+    curs_set(1);
+
+    auto redraw = [&]()
+    {
+        if (pos < scrollOff)
+            scrollOff = pos;
+        else if (pos - scrollOff >= fieldWidth)
+            scrollOff = pos - fieldWidth + 1;
+        if (scrollOff < 0)
+            scrollOff = 0;
+
+        mvwprintw(win, 1, fieldX, "%*s", fieldWidth, "");
+
+        int visibleLen = std::min((int)input.size() - scrollOff, fieldWidth);
+        if (visibleLen < 0)
+            visibleLen = 0;
+        std::string visible = input.substr(scrollOff, visibleLen);
+
+        mvwprintw(win, 1, fieldX, "%s", visible.c_str());
+        wmove(win, 1, fieldX + (pos - scrollOff));
+        wrefresh(win);
+    };
+
+    redraw();
+
+    int ch;
+    while (true)
+    {
+        ch = wgetch(win);
+
+        if (ch == '\n' || ch == KEY_ENTER)
+            break;
+
+        if (ch == 27) // ESC: vazgeç, mevcut aramaya/listeye dokunma
+        {
+            cancelled = true;
+            break;
+        }
+        else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8)
+        {
+            if (pos > 0)
+            {
+                input.erase(pos - 1, 1);
+                pos--;
+            }
+        }
+        else if (ch == KEY_DC)
+        {
+            if (pos < (int)input.size())
+                input.erase(pos, 1);
+        }
+        else if (ch == KEY_LEFT)
+        {
+            if (pos > 0)
+                pos--;
+        }
+        else if (ch == KEY_RIGHT)
+        {
+            if (pos < (int)input.size())
+                pos++;
+        }
+        else if (ch == KEY_HOME)
+        {
+            pos = 0;
+        }
+        else if (ch == KEY_END)
+        {
+            pos = (int)input.size();
+        }
+        else if (isprint(ch))
+        {
+            input.insert(input.begin() + pos, (char)ch);
+            pos++;
+        }
+
+        redraw();
+    }
+
+    curs_set(0);
+    delwin(win);
+    return input;
+}
+
 // Shown once on startup when no config file exists yet. Collects the
 // LeetCode session cookie and CSRF token needed to authenticate requests,
 // then persists them via createConfig() so the user isn't asked again.
@@ -805,11 +923,22 @@ Screen mainScreen()
     int apiSkip = 0;
     bool hasMore = true;
 
+    // Arama modundayken loadMore() sayfalamayı searchQuestions() üzerinden
+    // yapar, değilse normal getQuestions() üzerinden -- ikisi de aynı
+    // skip/limit/hasMore mantığını paylaştığı için tek bir lambda'ya
+    // sığdırmak, listScreen'in geri kalanının (yukarı/aşağı, lazy-load
+    // sınırına yaklaşınca çekme vs.) arama açıkken de değişmeden
+    // çalışmasını sağlıyor.
+    std::string searchTerm;
+    bool searching = false;
+
     auto loadMore = [&]()
     {
         if (!hasMore)
             return;
-        QuestionPage page = getQuestions(apiSkip, API_PAGE_SIZE);
+        QuestionPage page = searching
+                                 ? searchQuestions(apiSkip, API_PAGE_SIZE, searchTerm)
+                                 : getQuestions(apiSkip, API_PAGE_SIZE);
         questions.insert(questions.end(), page.questions.begin(), page.questions.end());
         apiSkip += (int)page.questions.size();
         hasMore = page.hasMore;
@@ -856,6 +985,20 @@ Screen mainScreen()
 
         drawLogo();
 
+        if (searching)
+        {
+            std::string status = "Search: \"" + searchTerm + "\"  (" +
+                                  std::to_string(n) + (hasMore ? "+" : "") +
+                                  (n == 1 ? " result" : " results") + ")";
+            int maxWidth = std::max(0, COLS - list_start_x - 1);
+            if ((int)status.size() > maxWidth)
+                status = status.substr(0, maxWidth);
+
+            attron(COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
+            mvprintw(LOGO_HEIGHT, list_start_x, "%s", status.c_str());
+            attroff(COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
+        }
+
         for (int i = offset; i < offset + page_size && i < n; i++)
         {
             int colorPair = difficultyColorPair(questions[i].difficulty);
@@ -869,7 +1012,7 @@ Screen mainScreen()
             attroff(attrs);
         }
 
-        mvprintw(LINES - 1, 1, "Up/Down: Navigate | Enter: Select | Q: Quit");
+        mvprintw(LINES - 1, 1, "Up/Down: Navigate | Enter: Select | /: Search | Q: Quit");
         refresh();
 
         int c = getch();
@@ -917,6 +1060,49 @@ Screen mainScreen()
             selectedQuestionSlug = questions[highlight].titleSlug;
             selectedQuestionId = questions[highlight].id;
             return SCREEN_QUESTION;
+        }
+        else if (c == '/')
+        {
+            bool cancelled = false;
+            std::string term = searchPromptBox(searchTerm, cancelled);
+
+            if (!cancelled)
+            {
+                // Baştaki/sondaki boşlukları at, sadece boşluktan oluşan bir
+                // terim yanlışlıkla "boş değil" sayılıp gereksiz bir API
+                // isteği tetiklemesin.
+                size_t start = term.find_first_not_of(' ');
+                term = (start == std::string::npos)
+                           ? ""
+                           : term.substr(start, term.find_last_not_of(' ') - start + 1);
+
+                if (term.empty() && searching)
+                {
+                    // Boş terimle onaylamak aramadan çıkış demek: tam
+                    // listeye geri dön.
+                    searching = false;
+                    searchTerm.clear();
+                    questions.clear();
+                    apiSkip = 0;
+                    hasMore = true;
+                    loadMore();
+                    highlight = 0;
+                    offset = 0;
+                }
+                else if (!term.empty())
+                {
+                    searching = true;
+                    searchTerm = term;
+                    questions.clear();
+                    apiSkip = 0;
+                    hasMore = true;
+                    loadMore();
+                    highlight = 0;
+                    offset = 0;
+                }
+                // term boş ve zaten arama yoksa: hiçbir şey değişmedi,
+                // popup kapanıp normal listeye dönülür.
+            }
         }
         else if (c == 'q' || c == 'Q')
         {

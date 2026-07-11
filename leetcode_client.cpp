@@ -699,6 +699,201 @@ runDetail getRunDetail(std::string interpret_id, std::string titleSlug)
     return rd;
 }
 
+globalData getglobalData()
+{
+
+    std::vector<std::string> tokens = readConfig();
+    std::string leetcode_session = tokens[0];
+    std::string csrftoken = tokens[1];
+
+    std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
+    std::string csrftoken_header = "x-csrftoken: " + csrftoken;
+
+    std::vector<std::string> headers;
+    headers.push_back("Content-Type: application/json");
+    headers.push_back(token_header);
+    headers.push_back(csrftoken_header);
+    headers.push_back("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
+    headers.push_back("Origin: https://leetcode.com");
+    headers.push_back("Accept: */*");
+    headers.push_back("Accept-Language: en-US,en;q=0.9");
+    headers.push_back("sec-fetch-mode: cors");
+    headers.push_back("sec-fetch-site: same-origin");
+    headers.push_back("sec-fetch-dest: empty");
+
+    const std::string url = "https://leetcode.com/graphql/";
+
+    nlohmann::json j;
+    j["operationalName"] = "globalData";
+    j["quary"] = "\n    query globalData {\n  userStatus {\n    userId\n    isSignedIn\n    isMockUser\n    isPremium\n    premiumCountryCode\n    isVerified\n    username\n    realName\n    avatar\n    isAdmin\n    isSuperuser\n    permissions\n    isTranslator\n    activeSessionId\n    checkedInToday\n    completedFeatureGuides\n    premiumExpiredAt\n    notificationStatus {\n      lastModified\n      numUnread\n    }\n  }\n}\n    ";
+    j["variables"] = {};
+
+    std::string response = httpPost(url, j.dump(), headers);
+
+    nlohmann::json r = nlohmann::json::parse(response);
+
+    globalData gd;
+
+    if (!r.contains("data") ||
+        !r["data"].contains("userStatus") ||
+        r["data"]["userStatus"].is_null())
+    {
+        return gd;
+    }
+
+    auto &u = r["data"]["userStatus"];
+
+    gd.userId = (u.contains("userId") && !u["userId"].is_null())
+                    ? u["userId"].get<int>()
+                    : 0;
+
+    gd.isSignedIn = (u.contains("isSignedIn") && !u["isSignedIn"].is_null())
+                        ? u["isSignedIn"].get<bool>()
+                        : false;
+
+    gd.isMockUser = (u.contains("isMockUser") && !u["isMockUser"].is_null())
+                        ? u["isMockUser"].get<bool>()
+                        : false;
+
+    gd.isPremium = (u.contains("isPremium") && !u["isPremium"].is_null())
+                       ? u["isPremium"].get<bool>()
+                       : false;
+
+    gd.premiumCountryCode = (u.contains("premiumCountryCode") && !u["premiumCountryCode"].is_null())
+                                ? u["premiumCountryCode"].get<std::string>()
+                                : "";
+
+    gd.isVerified = (u.contains("isVerified") && !u["isVerified"].is_null())
+                        ? u["isVerified"].get<bool>()
+                        : false;
+
+    gd.username = (u.contains("username") && !u["username"].is_null())
+                      ? u["username"].get<std::string>()
+                      : "";
+
+    gd.realName = (u.contains("realName") && !u["realName"].is_null())
+                      ? u["realName"].get<std::string>()
+                      : "";
+
+    gd.avatar = (u.contains("avatar") && !u["avatar"].is_null())
+                    ? u["avatar"].get<std::string>()
+                    : "";
+
+    gd.isAdmin = (u.contains("isAdmin") && !u["isAdmin"].is_null())
+                     ? u["isAdmin"].get<bool>()
+                     : false;
+
+    gd.isSuperuser = (u.contains("isSuperuser") && !u["isSuperuser"].is_null())
+                         ? u["isSuperuser"].get<bool>()
+                         : false;
+
+    gd.isTranslator = (u.contains("isTranslator") && !u["isTranslator"].is_null())
+                          ? u["isTranslator"].get<bool>()
+                          : false;
+
+    gd.activeSessionId = (u.contains("activeSessionId") && !u["activeSessionId"].is_null())
+                             ? u["activeSessionId"].get<int>()
+                             : 0;
+
+    gd.checkedInToday = (u.contains("checkedInToday") && !u["checkedInToday"].is_null())
+                            ? u["checkedInToday"].get<bool>()
+                            : false;
+
+    if (u.contains("permissions") && u["permissions"].is_array())
+    {
+        gd.permissions = u["permissions"].get<std::vector<std::string>>();
+    }
+
+    if (u.contains("completedFeatureGuides") && u["completedFeatureGuides"].is_array())
+    {
+        gd.completedFeatureGuides =
+            u["completedFeatureGuides"].get<std::vector<std::string>>();
+    }
+
+    gd.premiumExpiredAt = (u.contains("premiumExpiredAt") && !u["premiumExpiredAt"].is_null())
+                              ? u["premiumExpiredAt"].get<long long>()
+                              : 0;
+
+    if (u.contains("notificationStatus") &&
+        !u["notificationStatus"].is_null())
+    {
+        auto &n = u["notificationStatus"];
+
+        gd.notificationStatus.lastModified =
+            (n.contains("lastModified") && !n["lastModified"].is_null())
+                ? n["lastModified"].get<long long>()
+                : 0;
+
+        gd.notificationStatus.numUnread =
+            (n.contains("numUnread") && !n["numUnread"].is_null())
+                ? n["numUnread"].get<int>()
+                : 0;
+    }
+
+    return gd;
+}
+
+QuestionPage searchQuestions(int skip, int limit, std::string questionName)
+{
+    std::vector<std::string> tokens = readConfig();
+    std::string leetcode_session = tokens[0];
+    std::string csrftoken = tokens[1];
+
+    std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
+    std::string csrftoken_header = "x-csrftoken: " + csrftoken;
+
+    std::vector<std::string> headers;
+    headers.push_back("Content-Type: application/json");
+    headers.push_back(token_header);
+    headers.push_back(csrftoken_header);
+    headers.push_back("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
+    headers.push_back("Origin: https://leetcode.com");
+    headers.push_back("Accept: */*");
+    headers.push_back("Accept-Language: en-US,en;q=0.9");
+    headers.push_back("sec-fetch-mode: cors");
+    headers.push_back("sec-fetch-site: same-origin");
+    headers.push_back("sec-fetch-dest: empty");
+
+    std::string query = "\n    query problemsetQuestionListV2($filters: QuestionFilterInput, $limit: Int, $searchKeyword: String, $skip: Int, $sortBy: QuestionSortByInput, $categorySlug: String) {\n  problemsetQuestionListV2(\n    filters: $filters\n    limit: $limit\n    searchKeyword: $searchKeyword\n    skip: $skip\n    sortBy: $sortBy\n    categorySlug: $categorySlug\n  ) {\n    questions {\n      id\n      titleSlug\n      title\n      translatedTitle\n      questionFrontendId\n      paidOnly\n      difficulty\n      topicTags {\n        name\n        slug\n        nameTranslated\n      }\n      status\n      isInMyFavorites\n      frequency\n      acRate\n      contestPoint\n    }\n    totalLength\n    finishedLength\n    hasMore\n  }\n}\n    ";
+
+    nlohmann::json j;
+    j["operationName"] = "problemsetQuestionListV2";
+    j["query"] = query;
+    j["variables"]["searchKeyword"] = questionName;
+    j["variables"]["limit"] = limit;
+    j["variables"]["skip"] = skip;
+
+    std::string url = "https://leetcode.com/graphql";
+    std::string response = httpPost(url, j.dump(), headers);
+
+    nlohmann::json resJson = nlohmann::json::parse(response);
+    auto &result = resJson["data"]["problemsetQuestionListV2"];
+    auto &questions = result["questions"];
+
+    QuestionPage page;
+    page.hasMore = result.value("hasMore", false);
+    page.totalLength = result.value("totalLength", 0);
+
+    for (auto &q : questions)
+    {
+        questionAtList question;
+        question.id = q["questionFrontendId"].is_string()
+                          ? q["questionFrontendId"].get<std::string>()
+                          : std::to_string(q["questionFrontendId"].get<int>());
+        question.title = q["title"];
+        question.titleSlug = q["titleSlug"];
+        question.difficulty = q["difficulty"];
+        question.status = q["status"];
+        question.paidOnly = q["paidOnly"];
+        for (auto &tag : q["topicTags"])
+            question.topicTags.push_back(tag.value("name", ""));
+
+        page.questions.push_back(question);
+    }
+
+    return page;
+}
+
 void printGetAllQuestions()
 {
     std::vector<questionAtList> questionList = getAllQuestions();
