@@ -132,6 +132,11 @@ struct submissionDetail
 };
 
 
+struct runResponse{
+    std::string interpret_id;
+    std::string test_case;
+};
+
 std::vector<questionAtList> getAllQuestions();
 void printGetAllQuestions();
 questionDetail getQuestionDetail(std::string titleSlug);

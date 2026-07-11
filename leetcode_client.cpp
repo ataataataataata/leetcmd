@@ -414,6 +414,80 @@ submissionDetail getSubmitDetail(long long submissionId, std::string titleSlug)
     return sd;
 }
 
+runResponse runCode(std::string data_input,
+                    std::string lang,
+                    std::string questionId,
+                    std::string typedCode,
+                    std::string titleSlug)
+{
+    std::vector<std::string> tokens = readConfig();
+    std::string leetcode_session = tokens[0];
+    std::string csrftoken = tokens[1];
+
+    std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
+    std::string csrftoken_header = "x-csrftoken: " + csrftoken;
+    std::string response;
+
+    std::string cleanId;
+    for (char c : questionId)
+    {
+        if (isdigit(static_cast<unsigned char>(c)))
+            cleanId += c;
+    }
+
+    if (cleanId.empty())
+    {
+        throw std::runtime_error("CRITICAL: questionId is empty or invalid! Input: " + questionId);
+    }
+
+    std::vector<std::string> headers;
+    headers.push_back("Content-Type: application/json");
+    headers.push_back(token_header);
+    headers.push_back(csrftoken_header);
+    headers.push_back("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
+    headers.push_back("Referer: https://leetcode.com/problems/" + titleSlug + "/");
+    headers.push_back("Origin: https://leetcode.com");
+
+    
+    std::string url = "https://leetcode.com/problems/" + titleSlug + "/interpret_solution/";
+
+    nlohmann::json j;
+    j["data_input"] = data_input;
+    j["lang"] = lang;
+    j["question_id"] = questionId;
+    j["typed_code"] = typedCode;
+
+    response = httpPost(url, j.dump(), headers);
+
+    runResponse rp;
+
+    try
+    {
+        nlohmann::json r = nlohmann::json::parse(response);
+
+        if (r.contains("interpret_id") && !r["interpret_id"].is_null())
+        {
+            rp.interpret_id = r["interpret_id"].get<std::string>();
+        }
+
+        if (r.contains("test_case") && !r["test_case"].is_null())
+        {
+            rp.test_case = r["test_case"].get<std::string>();
+        }
+
+        if (rp.interpret_id.empty())
+        {
+            throw std::runtime_error("interpret_id not found in response: " + response.substr(0, 200));
+        }
+    }
+    catch (const nlohmann::json::parse_error &)
+    {
+        throw std::runtime_error("Failed to parse run response (likely non-JSON): " + response.substr(0, 200));
+    }
+
+    return rp;
+}
+
 void printGetAllQuestions()
 {
     std::vector<questionAtList> questionList = getAllQuestions();
