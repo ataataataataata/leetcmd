@@ -213,6 +213,15 @@ questionDetail getQuestionDetail(std::string titleSlug)
         q.ugcArticleOfficialSolutionArticlee.push_back(u);
     }
 
+    if (questionJson.contains("exampleTestcaseList") &&
+        questionJson["exampleTestcaseList"].is_array())
+    {
+        for (const auto &tc : questionJson["exampleTestcaseList"])
+        {
+            q.exampleTestcaseList.push_back(tc.get<std::string>());
+        }
+    }
+
     questionDetail qd;
 
     if (r["data"]["languageList"].is_array())
@@ -303,7 +312,7 @@ submissionDetail getSubmitDetail(long long submissionId, std::string titleSlug)
 
     std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
     std::string csrftoken_header = "x-csrftoken: " + csrftoken;
-    
+
     std::vector<std::string> headers;
     headers.push_back("Content-Type: application/json");
     headers.push_back(token_header);
@@ -346,7 +355,8 @@ submissionDetail getSubmitDetail(long long submissionId, std::string titleSlug)
 
     // 1. Status Code
     sd.statusCode = (details.contains("statusCode") && !details["statusCode"].is_null())
-                        ? details["statusCode"].get<int>() : 0;
+                        ? details["statusCode"].get<int>()
+                        : 0;
 
     // 2. Total Correct (With Pending Logic)
     if (details.contains("totalCorrect") && !details["totalCorrect"].is_null())
@@ -361,35 +371,45 @@ submissionDetail getSubmitDetail(long long submissionId, std::string titleSlug)
 
     // 3. Other Numeric Fields
     sd.totalTestcases = (details.contains("totalTestcases") && !details["totalTestcases"].is_null())
-                            ? details["totalTestcases"].get<int>() : 0;
-    
+                            ? details["totalTestcases"].get<int>()
+                            : 0;
+
     sd.runtimePercentile = (details.contains("runtimePercentile") && !details["runtimePercentile"].is_null())
-                               ? details["runtimePercentile"].get<double>() : -1.0;
-    
+                               ? details["runtimePercentile"].get<double>()
+                               : -1.0;
+
     sd.memoryPercentile = (details.contains("memoryPercentile") && !details["memoryPercentile"].is_null())
-                              ? details["memoryPercentile"].get<double>() : -1.0;
+                              ? details["memoryPercentile"].get<double>()
+                              : -1.0;
 
     // 4. String Fields
     sd.runtimeDisplay = (details.contains("runtimeDisplay") && !details["runtimeDisplay"].is_null())
-                            ? details["runtimeDisplay"].get<std::string>() : "";
-    
+                            ? details["runtimeDisplay"].get<std::string>()
+                            : "";
+
     sd.memoryDisplay = (details.contains("memoryDisplay") && !details["memoryDisplay"].is_null())
-                           ? details["memoryDisplay"].get<std::string>() : "";
-    
+                           ? details["memoryDisplay"].get<std::string>()
+                           : "";
+
     sd.compileError = (details.contains("compileError") && !details["compileError"].is_null())
-                          ? details["compileError"].get<std::string>() : "";
-    
+                          ? details["compileError"].get<std::string>()
+                          : "";
+
     sd.runtimeError = (details.contains("runtimeError") && !details["runtimeError"].is_null())
-                          ? details["runtimeError"].get<std::string>() : "";
-    
+                          ? details["runtimeError"].get<std::string>()
+                          : "";
+
     sd.lastTestcase = (details.contains("lastTestcase") && !details["lastTestcase"].is_null())
-                          ? details["lastTestcase"].get<std::string>() : "";
-    
+                          ? details["lastTestcase"].get<std::string>()
+                          : "";
+
     sd.codeOutput = (details.contains("codeOutput") && !details["codeOutput"].is_null())
-                        ? details["codeOutput"].get<std::string>() : "";
-    
+                        ? details["codeOutput"].get<std::string>()
+                        : "";
+
     sd.expectedOutput = (details.contains("expectedOutput") && !details["expectedOutput"].is_null())
-                            ? details["expectedOutput"].get<std::string>() : "";
+                            ? details["expectedOutput"].get<std::string>()
+                            : "";
 
     return sd;
 }

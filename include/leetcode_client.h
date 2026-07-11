@@ -107,6 +107,7 @@ struct questionDetail
 {
     std::vector<language> languageList;
     question questionn;
+    std::vector<std::string>exampleTestcaseList;
 };
 
 struct submitResponse
