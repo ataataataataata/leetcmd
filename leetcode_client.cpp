@@ -414,11 +414,7 @@ submissionDetail getSubmitDetail(long long submissionId, std::string titleSlug)
     return sd;
 }
 
-runResponse runCode(std::string data_input,
-                    std::string lang,
-                    std::string questionId,
-                    std::string typedCode,
-                    std::string titleSlug)
+runResponse runCode(std::string data_input, std::string lang, std::string questionId, std::string typedCode, std::string titleSlug)
 {
     std::vector<std::string> tokens = readConfig();
     std::string leetcode_session = tokens[0];
@@ -448,7 +444,6 @@ runResponse runCode(std::string data_input,
     headers.push_back("Referer: https://leetcode.com/problems/" + titleSlug + "/");
     headers.push_back("Origin: https://leetcode.com");
 
-    
     std::string url = "https://leetcode.com/problems/" + titleSlug + "/interpret_solution/";
 
     nlohmann::json j;
@@ -467,15 +462,15 @@ runResponse runCode(std::string data_input,
 
         if (r.contains("interpret_id") && !r["interpret_id"].is_null())
         {
-            rp.interpret_id = r["interpret_id"].get<std::string>();
+            rp.interpretId = r["interpret_id"].get<std::string>();
         }
 
         if (r.contains("test_case") && !r["test_case"].is_null())
         {
-            rp.test_case = r["test_case"].get<std::string>();
+            rp.testCase = r["test_case"].get<std::string>();
         }
 
-        if (rp.interpret_id.empty())
+        if (rp.interpretId.empty())
         {
             throw std::runtime_error("interpret_id not found in response: " + response.substr(0, 200));
         }
@@ -486,6 +481,135 @@ runResponse runCode(std::string data_input,
     }
 
     return rp;
+}
+
+runDetail getRunDetail(std::string interpret_id, std::string titleSlug)
+{
+
+    std::vector<std::string> tokens = readConfig();
+    std::string leetcode_session = tokens[0];
+    std::string csrftoken = tokens[1];
+
+    std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
+    std::string csrftoken_header = "x-csrftoken: " + csrftoken;
+
+    std::vector<std::string> headers;
+    headers.push_back("Content-Type: application/json");
+    headers.push_back(token_header);
+    headers.push_back(csrftoken_header);
+    headers.push_back("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
+    headers.push_back("Referer: https://leetcode.com/problems/" + titleSlug + "/");
+    headers.push_back("Origin: https://leetcode.com");
+    headers.push_back("Accept: */*");
+    headers.push_back("Accept-Language: en-US,en;q=0.9");
+    headers.push_back("sec-fetch-mode: cors");
+    headers.push_back("sec-fetch-site: same-origin");
+    headers.push_back("sec-fetch-dest: empty");
+
+    const std::string url = "https://leetcode.com/submissions/detail/" + interpret_id + "/check/";
+
+    std::string response = httpPost(url, "", headers);
+
+    nlohmann::json r = nlohmann::json::parse(response);
+
+    if (!r.contains("status_code") || r["status_code"].is_null())
+    {
+        runDetail rd;
+        rd.statusCode = 0; // Treat as pending
+        return rd;
+    }
+
+    runDetail rd;
+
+    rd.statusCode = (r.contains("status_code") && !r["status_code"].is_null())
+                         ? r["status_code"].get<int>()
+                         : 0;
+
+    rd.lang = (r.contains("lang") && !r["lang"].is_null())
+                  ? r["lang"].get<std::string>()
+                  : "";
+
+    rd.runSuccess = (r.contains("run_success") && !r["run_success"].is_null())
+                         ? r["run_success"].get<bool>()
+                         : false;
+
+    rd.compileError = (r.contains("compile_error") && !r["compile_error"].is_null())
+                           ? r["compile_error"].get<std::string>()
+                           : "";
+
+    rd.fullCompileError = (r.contains("full_compile_error") && !r["full_compile_error"].is_null())
+                                ? r["full_compile_error"].get<std::string>()
+                                : "";
+
+    rd.statusRuntime = (r.contains("status_runtime") && !r["status_runtime"].is_null())
+                            ? r["status_runtime"].get<std::string>()
+                            : "";
+
+    rd.memory = (r.contains("memory") && !r["memory"].is_null())
+                    ? r["memory"].get<int>()
+                    : 0;
+
+    if (r.contains("code_answer") && r["code_answer"].is_array())
+    {
+        rd.codeAnswer = r["code_answer"].get<std::vector<std::string>>();
+    }
+
+    if (r.contains("code_output") && r["code_output"].is_array())
+    {
+        rd.codeOutput = r["code_output"].get<std::vector<std::string>>();
+    }
+
+    if (r.contains("std_output_list") && r["std_output_list"].is_array())
+    {
+        rd.stdOutputList = r["std_output_list"].get<std::vector<std::string>>();
+    }
+
+    rd.taskFinishTime = (r.contains("task_finish_time") && !r["task_finish_time"].is_null())
+                              ? r["task_finish_time"].get<long long>()
+                              : 0;
+
+    rd.taskName = (r.contains("task_name") && !r["task_name"].is_null())
+                       ? r["task_name"].get<std::string>()
+                       : "";
+
+    rd.totalCorrect = (r.contains("total_correct") && !r["total_correct"].is_null())
+                           ? r["total_correct"].get<int>()
+                           : 0;
+
+    rd.totalTestcases = (r.contains("total_testcases") && !r["total_testcases"].is_null())
+                             ? r["total_testcases"].get<int>()
+                             : 0;
+
+    rd.runtimePercentile = (r.contains("runtime_percentile") && !r["runtime_percentile"].is_null())
+                                ? r["runtime_percentile"].get<double>()
+                                : 0.0;
+
+    rd.statusMemory = (r.contains("status_memory") && !r["status_memory"].is_null())
+                           ? r["status_memory"].get<std::string>()
+                           : "";
+
+    rd.memoryPercentile = (r.contains("memory_percentile") && !r["memory_percentile"].is_null())
+                               ? r["memory_percentile"].get<double>()
+                               : 0.0;
+
+    
+    rd.prettyLang = (r.contains("pretty_lang") && !r["pretty_lang"].is_null())
+                         ? r["pretty_lang"].get<std::string>()
+                         : "";
+
+    rd.submissionId = (r.contains("submission_id") && !r["submission_id"].is_null())
+                           ? r["submission_id"].get<std::string>()
+                           : "";
+
+    rd.statusMsg = (r.contains("status_msg") && !r["status_msg"].is_null())
+                        ? r["status_msg"].get<std::string>()
+                        : "";
+
+    rd.state = (r.contains("state") && !r["state"].is_null())
+                   ? r["state"].get<std::string>()
+                   : "";
+
+    return rd;
 }
 
 void printGetAllQuestions()

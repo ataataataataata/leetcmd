@@ -107,7 +107,7 @@ struct questionDetail
 {
     std::vector<language> languageList;
     question questionn;
-    std::vector<std::string>exampleTestcaseList;
+    std::vector<std::string> exampleTestcaseList;
 };
 
 struct submitResponse
@@ -124,17 +124,48 @@ struct submissionDetail
     double runtimePercentile;
     std::string memoryDisplay;
     double memoryPercentile;
-    std::string compileError;   
-    std::string runtimeError;   
-    std::string lastTestcase;   
-    std::string codeOutput;    
-    std::string expectedOutput; 
+    std::string compileError;
+    std::string runtimeError;
+    std::string lastTestcase;
+    std::string codeOutput;
+    std::string expectedOutput;
 };
 
+struct runResponse
+{
+    std::string interpretId;
+    std::string testCase;
+};
 
-struct runResponse{
-    std::string interpret_id;
-    std::string test_case;
+struct runDetail
+{
+    int statusCode;
+    std::string lang;
+    bool runSuccess;
+
+    std::string compileError;
+    std::string fullCompileError;
+
+    std::string statusRuntime;
+    int memory;
+
+    std::vector<std::string> codeAnswer;
+    std::vector<std::string> codeOutput;
+    std::vector<std::string> stdOutputList;
+
+    long long taskFinishTime;
+    std::string taskName;
+
+    int totalCorrect;
+    int totalTestcases;
+
+    double runtimePercentile;
+    std::string statusMemory;
+    double memoryPercentile;
+    std::string prettyLang;
+    std::string submissionId;
+    std::string statusMsg;
+    std::string state;
 };
 
 std::vector<questionAtList> getAllQuestions();
