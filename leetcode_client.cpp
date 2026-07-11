@@ -50,6 +50,94 @@ std::vector<questionAtList> getAllQuestions()
     return questionList;
 }
 
+QuestionPage getQuestions(int skip, int limit)
+{
+    std::vector<std::string> tokens = readConfig();
+    std::string leetcode_session = tokens[0];
+    std::string csrftoken = tokens[1];
+
+    std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
+    std::string csrftoken_header = "x-csrftoken: " + csrftoken;
+
+    std::vector<std::string> headers = {
+        "Content-Type: application/json",
+        token_header,
+        csrftoken_header,
+        "Referer: https://leetcode.com/problemset/",
+        "Origin: https://leetcode.com"};
+
+    const std::string query = R"GQL(
+    query problemsetQuestionListV2($filters: QuestionFilterInput, $limit: Int, $searchKeyword: String, $skip: Int, $sortBy: QuestionSortByInput, $categorySlug: String) {
+  problemsetQuestionListV2(
+    filters: $filters
+    limit: $limit
+    searchKeyword: $searchKeyword
+    skip: $skip
+    sortBy: $sortBy
+    categorySlug: $categorySlug
+  ) {
+    questions {
+      id
+      titleSlug
+      title
+      translatedTitle
+      questionFrontendId
+      paidOnly
+      difficulty
+      topicTags {
+        name
+        slug
+        nameTranslated
+      }
+      status
+      isInMyFavorites
+      frequency
+      acRate
+      contestPoint
+    }
+    totalLength
+    finishedLength
+    hasMore
+  }
+}
+    )GQL";
+
+    nlohmann::json body = {
+        {"operationName", "problemsetQuestionListV2"},
+        {"query", query},
+        {"variables", {{"skip", skip}, {"limit", limit}, {"categorySlug", "all-code-essentials"}, {"searchKeyword", ""}, {"sortBy", {{"sortField", "CUSTOM"}, {"sortOrder", "ASCENDING"}}}, {"filters", {{"filterCombineType", "ALL"}, {"statusFilter", {{"questionStatuses", nlohmann::json::array()}, {"operator", "IS"}}}}}}}};
+
+    std::string url = "https://leetcode.com/graphql";
+    std::string response = httpPost(url, body.dump(), headers);
+
+    nlohmann::json j = nlohmann::json::parse(response);
+    auto &result = j["data"]["problemsetQuestionListV2"];
+    auto &questions = result["questions"];
+
+    QuestionPage page;
+    page.hasMore = result.value("hasMore", false);
+    page.totalLength = result.value("totalLength", 0);
+
+    for (auto &q : questions)
+    {
+        questionAtList question;
+        question.id = q["questionFrontendId"].is_string()
+                          ? q["questionFrontendId"].get<std::string>()
+                          : std::to_string(q["questionFrontendId"].get<int>());
+        question.title = q["title"];
+        question.titleSlug = q["titleSlug"];
+        question.difficulty = q["difficulty"];
+        question.status = q["status"];
+        question.paidOnly = q["paidOnly"];
+        for (auto &tag : q["topicTags"])
+            question.topicTags.push_back(tag.value("name", ""));
+
+        page.questions.push_back(question);
+    }
+
+    return page;
+}
+
 questionDetail getQuestionDetail(std::string titleSlug)
 {
     std::vector<std::string> tokens = readConfig();
@@ -522,28 +610,28 @@ runDetail getRunDetail(std::string interpret_id, std::string titleSlug)
     runDetail rd;
 
     rd.statusCode = (r.contains("status_code") && !r["status_code"].is_null())
-                         ? r["status_code"].get<int>()
-                         : 0;
+                        ? r["status_code"].get<int>()
+                        : 0;
 
     rd.lang = (r.contains("lang") && !r["lang"].is_null())
                   ? r["lang"].get<std::string>()
                   : "";
 
     rd.runSuccess = (r.contains("run_success") && !r["run_success"].is_null())
-                         ? r["run_success"].get<bool>()
-                         : false;
+                        ? r["run_success"].get<bool>()
+                        : false;
 
     rd.compileError = (r.contains("compile_error") && !r["compile_error"].is_null())
-                           ? r["compile_error"].get<std::string>()
-                           : "";
+                          ? r["compile_error"].get<std::string>()
+                          : "";
 
     rd.fullCompileError = (r.contains("full_compile_error") && !r["full_compile_error"].is_null())
-                                ? r["full_compile_error"].get<std::string>()
-                                : "";
+                              ? r["full_compile_error"].get<std::string>()
+                              : "";
 
     rd.statusRuntime = (r.contains("status_runtime") && !r["status_runtime"].is_null())
-                            ? r["status_runtime"].get<std::string>()
-                            : "";
+                           ? r["status_runtime"].get<std::string>()
+                           : "";
 
     rd.memory = (r.contains("memory") && !r["memory"].is_null())
                     ? r["memory"].get<int>()
@@ -565,45 +653,44 @@ runDetail getRunDetail(std::string interpret_id, std::string titleSlug)
     }
 
     rd.taskFinishTime = (r.contains("task_finish_time") && !r["task_finish_time"].is_null())
-                              ? r["task_finish_time"].get<long long>()
-                              : 0;
+                            ? r["task_finish_time"].get<long long>()
+                            : 0;
 
     rd.taskName = (r.contains("task_name") && !r["task_name"].is_null())
-                       ? r["task_name"].get<std::string>()
-                       : "";
+                      ? r["task_name"].get<std::string>()
+                      : "";
 
     rd.totalCorrect = (r.contains("total_correct") && !r["total_correct"].is_null())
-                           ? r["total_correct"].get<int>()
-                           : 0;
+                          ? r["total_correct"].get<int>()
+                          : 0;
 
     rd.totalTestcases = (r.contains("total_testcases") && !r["total_testcases"].is_null())
-                             ? r["total_testcases"].get<int>()
-                             : 0;
+                            ? r["total_testcases"].get<int>()
+                            : 0;
 
     rd.runtimePercentile = (r.contains("runtime_percentile") && !r["runtime_percentile"].is_null())
-                                ? r["runtime_percentile"].get<double>()
-                                : 0.0;
-
-    rd.statusMemory = (r.contains("status_memory") && !r["status_memory"].is_null())
-                           ? r["status_memory"].get<std::string>()
-                           : "";
-
-    rd.memoryPercentile = (r.contains("memory_percentile") && !r["memory_percentile"].is_null())
-                               ? r["memory_percentile"].get<double>()
+                               ? r["runtime_percentile"].get<double>()
                                : 0.0;
 
-    
+    rd.statusMemory = (r.contains("status_memory") && !r["status_memory"].is_null())
+                          ? r["status_memory"].get<std::string>()
+                          : "";
+
+    rd.memoryPercentile = (r.contains("memory_percentile") && !r["memory_percentile"].is_null())
+                              ? r["memory_percentile"].get<double>()
+                              : 0.0;
+
     rd.prettyLang = (r.contains("pretty_lang") && !r["pretty_lang"].is_null())
-                         ? r["pretty_lang"].get<std::string>()
-                         : "";
+                        ? r["pretty_lang"].get<std::string>()
+                        : "";
 
     rd.submissionId = (r.contains("submission_id") && !r["submission_id"].is_null())
-                           ? r["submission_id"].get<std::string>()
-                           : "";
+                          ? r["submission_id"].get<std::string>()
+                          : "";
 
     rd.statusMsg = (r.contains("status_msg") && !r["status_msg"].is_null())
-                        ? r["status_msg"].get<std::string>()
-                        : "";
+                       ? r["status_msg"].get<std::string>()
+                       : "";
 
     rd.state = (r.contains("state") && !r["state"].is_null())
                    ? r["state"].get<std::string>()

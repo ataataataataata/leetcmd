@@ -10,6 +10,7 @@ static int codeGutterWidth(const Editor &ed);
 #include <fstream>
 #include <algorithm>
 #include <unordered_map>
+#include <functional>
 
 #define LOGO_HEIGHT 6
 #define LOGO_SPLIT_COL 34 // column where "leet" and "cmd" parts split (tune to your font)
@@ -242,43 +243,91 @@ static std::string wordPrefixAtCursor(const Editor &ed)
     return line.substr(start, ed.cursor.col - start);
 }
 
-// Filters the keyword table for the given language down to entries that
-// could complete `prefix`. Prefix matches (word starts with what was typed)
-// rank first and are the common case; if there are fewer than 8 of those,
-// substring matches (prefix appears anywhere in the word -- e.g. typing
-// "back" surfaces push_back/pop_back/emplace_back) are appended so the list
-// stays useful even when you don't remember how a name *starts*. Each group
-// is alphabetically sorted, capped to 8 total to keep the popup compact.
-static std::vector<std::string> autocompleteSuggestions(const std::string &prefix, const std::string &langSlug)
+// Kullanıcının kodda daha önce yazdığı, en az 3 karakterlik tanımlayıcıları
+// (değişken/fonksiyon adları) toplar. LeetCode çözümlerinde sürekli
+// tekrarlanan "result", "dp", "left", "right" gibi kendi isimlerini bir
+// kere yazdıktan sonra autocomplete'in hatırlayıp önermesi için.
+static std::vector<std::string> collectBufferIdentifiers(const Editor &ed)
 {
-    std::vector<std::string> prefixMatches, substringMatches;
+    std::vector<std::string> ids;
+    std::string current;
+    for (const auto &line : ed.lines)
+    {
+        current.clear();
+        for (char ch : line)
+        {
+            if (isalnum((unsigned char)ch) || ch == '_')
+            {
+                current += ch;
+                continue;
+            }
+            if (current.size() >= 3 && !isdigit((unsigned char)current[0]))
+                ids.push_back(current);
+            current.clear();
+        }
+        if (current.size() >= 3 && !isdigit((unsigned char)current[0]))
+            ids.push_back(current);
+    }
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    return ids;
+}
+
+// Filters the keyword table for the given language, plus identifiers
+// already used in `ed`'s buffer, down to entries that could complete
+// `prefix`. Ranking: (1) dil anahtar kelimesi prefix eşleşmesi, (2) kendi
+// yazdığı isimlerden prefix eşleşmesi, (3) dil anahtar kelimesi substring
+// eşleşmesi (ör. "back" -> push_back/pop_back). Her grup alfabetik
+// sıralı, popup kompakt kalsın diye toplam 8 ile sınırlı.
+static std::vector<std::string> autocompleteSuggestions(const std::string &prefix, const std::string &langSlug, const Editor &ed)
+{
+    std::vector<std::string> prefixMatches, bufferMatches, substringMatches;
     if (prefix.empty())
         return prefixMatches;
 
     auto it = languageKeywords.find(langSlug);
-    if (it == languageKeywords.end())
-        return prefixMatches;
-
-    for (const auto &kw : it->second)
+    if (it != languageKeywords.end())
     {
-        if (kw.size() <= prefix.size())
-            continue;
+        for (const auto &kw : it->second)
+        {
+            if (kw.size() <= prefix.size())
+                continue;
 
-        if (kw.compare(0, prefix.size(), prefix) == 0)
-            prefixMatches.push_back(kw);
-        else if (kw.find(prefix) != std::string::npos)
-            substringMatches.push_back(kw);
+            if (kw.compare(0, prefix.size(), prefix) == 0)
+                prefixMatches.push_back(kw);
+            else if (kw.find(prefix) != std::string::npos)
+                substringMatches.push_back(kw);
+        }
+    }
+
+    for (const auto &id : collectBufferIdentifiers(ed))
+    {
+        if (id.size() <= prefix.size())
+            continue;
+        if (id.compare(0, prefix.size(), prefix) != 0)
+            continue;
+        if (std::find(prefixMatches.begin(), prefixMatches.end(), id) != prefixMatches.end())
+            continue; // zaten dil anahtar kelimesi olarak listede
+        bufferMatches.push_back(id);
     }
 
     std::sort(prefixMatches.begin(), prefixMatches.end());
+    std::sort(bufferMatches.begin(), bufferMatches.end());
     std::sort(substringMatches.begin(), substringMatches.end());
 
     std::vector<std::string> results = std::move(prefixMatches);
+    for (auto &id : bufferMatches)
+    {
+        if (results.size() >= 8)
+            break;
+        results.push_back(id);
+    }
     for (auto &kw : substringMatches)
     {
         if (results.size() >= 8)
             break;
-        results.push_back(kw);
+        if (std::find(results.begin(), results.end(), kw) == results.end())
+            results.push_back(kw);
     }
 
     if (results.size() > 8)
@@ -383,7 +432,12 @@ void initColors()
     else
         init_pair(PAIR_LOGO_LEET, COLOR_YELLOW, -1);
 
-    init_pair(PAIR_LOGO_CMD, COLOR_CYAN, -1);
+    // "cmd" ve onunla aynı aksan rengini paylaşan tüm arayüz öğeleri
+    // (autocomplete/dil seçici popup kenarlıkları, aktif satır numarası,
+    // run/submit durum kutuları) artık düz beyaz -- eskiden cyan'dı, çok
+    // fazla renk bir arada "gürültülü" duruyordu. Beyaz + turuncu (leet) +
+    // zorluk renkleri (yeşil/sarı/kırmızı) ile palet daha sade.
+    init_pair(PAIR_LOGO_CMD, COLOR_WHITE, -1);
 
     init_pair(PAIR_SUBMIT_OK, COLOR_GREEN, -1);
     init_pair(PAIR_SUBMIT_FAIL, COLOR_RED, -1);
@@ -414,6 +468,35 @@ int difficultyColorPair(const std::string &difficulty)
     if (difficulty == "Hard")
         return PAIR_HARD;
     return 0; // no color / default
+}
+
+// LeetCode'un problemsetQuestionListV2 API'si "status" alanında SOLVED /
+// ATTEMPTED / TO_DO gibi değerler döndürüyor. Çözülmüş sorular yeşil,
+// denenmiş-ama-çözülmemişler sarı; TO_DO (veya bilinmeyen bir değer) renksiz
+// kalıyor -- zaten satırın normal rengiyle "henüz dokunulmamış" hissi veriyor.
+int statusColorPair(const std::string &status)
+{
+    if (status == "SOLVED" || status == "ac")
+        return PAIR_SUBMIT_OK;
+    if (status == "ATTEMPTED" || status == "notac")
+        return PAIR_MEDIUM;
+    return 0; // TO_DO / bilinmiyor: renksiz
+}
+
+// Alt/üst kısayol çubuğunu terminal genişliğine göre kırparak basar.
+// mvprintw taşan metni olduğu gibi terminale yazar; terminal de kendi
+// içinde "satır kaydırma" yaparak metni bir alt satıra taşar -- eğer bu
+// zaten ekranın en alt satırıysa, terminal tüm içeriği yukarı kaydırır ve
+// ncurses'in çizdiği pencereler ekrandan "kaybolmuş" gibi görünür. Bunu
+// önlemek için metni asla `cols - 2` karakterden uzun basmıyoruz.
+static void drawHintBar(int row, int cols, const std::string &text)
+{
+    int maxWidth = std::max(0, cols - 2);
+    std::string clipped = ((int)text.size() > maxWidth) ? text.substr(0, maxWidth) : text;
+
+    attron(A_DIM);
+    mvprintw(row, 1, "%s", clipped.c_str());
+    attroff(A_DIM);
 }
 
 std::vector<std::string> wrapText(const std::string &text, int width)
@@ -627,21 +710,18 @@ void configScreen()
 
         std::string leet = "leet";
         std::string cmd = "cmd";
-        std::string suffix = " — First-Time Setup ";
-        int totalLen = (int)(leet.size() + cmd.size() + suffix.size());
+        int totalLen = (int)(leet.size() + cmd.size());
         int titleX = std::max(1, (boxWidth - totalLen) / 2);
 
-        wattron(win, COLOR_PAIR(PAIR_LOGO_LEET) | A_BOLD);
+        wattron(win,A_BOLD);
         mvwprintw(win, 0, titleX, "%s", leet.c_str());
-        wattroff(win, COLOR_PAIR(PAIR_LOGO_LEET) | A_BOLD);
+        wattroff(win,A_BOLD);
 
-        wattron(win, COLOR_PAIR(PAIR_LOGO_CMD) | A_BOLD);
+        wattron(win,A_BOLD);
         wprintw(win, "%s", cmd.c_str());
-        wattroff(win, COLOR_PAIR(PAIR_LOGO_CMD) | A_BOLD);
+        wattroff(win,A_BOLD);
 
-        wattron(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
-        wprintw(win, "%s", suffix.c_str());
-        wattroff(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
+
     };
 
     drawChrome();
@@ -663,15 +743,15 @@ void configScreen()
     int fieldX = 2 + labelWidth + 1;
     int fieldWidth = std::max(boxWidth - fieldX - 2, 10);
 
-    wattron(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
+    wattron(win,A_BOLD);
     mvwprintw(win, line, 2, "LEETCODE_SESSION:");
-    wattroff(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
+    wattroff(win,A_BOLD);
     int sessionRow = line;
     line += 2;
 
-    wattron(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
+    wattron(win,A_BOLD);
     mvwprintw(win, line, 2, "csrftoken:");
-    wattroff(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
+    wattroff(win,A_BOLD);
     int csrfRow = line;
 
     wrefresh(win);
@@ -682,10 +762,10 @@ void configScreen()
     for (auto &l : intro)
         ; // intro text is static; no need to redraw between fields other than chrome
     // Redraw both labels since drawChrome() only repaints the border/title.
-    wattron(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
+    wattron(win,A_BOLD);
     mvwprintw(win, sessionRow, 2, "LEETCODE_SESSION:");
     mvwprintw(win, csrfRow, 2, "csrftoken:");
-    wattroff(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
+    wattroff(win,A_BOLD);
     // Re-print the already-entered session value (truncated/scrolled view)
     // so it stays visible while the user fills in the csrf field.
     {
@@ -716,16 +796,54 @@ void configScreen()
 
 Screen mainScreen()
 {
-    std::vector<questionAtList> questions = getAllQuestions();
-    int highlight = 0;
-    int n = questions.size();
+    // getAllQuestions() yerine sayfalı getQuestions(skip, limit) kullanılıyor.
+    // Sorular tek seferde değil, kullanıcı listenin sonuna yaklaştıkça
+    // sunucudan API_PAGE_SIZE'lık parçalar halinde çekiliyor (lazy load).
+    static const int API_PAGE_SIZE = 100;
 
+    std::vector<questionAtList> questions;
+    int apiSkip = 0;
+    bool hasMore = true;
+
+    auto loadMore = [&]()
+    {
+        if (!hasMore)
+            return;
+        QuestionPage page = getQuestions(apiSkip, API_PAGE_SIZE);
+        questions.insert(questions.end(), page.questions.begin(), page.questions.end());
+        apiSkip += (int)page.questions.size();
+        hasMore = page.hasMore;
+    };
+
+    loadMore(); // ilk sayfa
+
+    int highlight = 0;
     int offset = 0;
-    int page_size = LINES - LOGO_HEIGHT - 2;
     int list_total_width = 95;
 
     while (1)
     {
+        int n = (int)questions.size();
+
+        // page_size her karede yeniden hesaplanır: pencere yeniden
+        // boyutlandırıldığında (KEY_RESIZE) bir kez hesaplanıp bir daha
+        // güncellenmeyen eski (stale) bir değer kullanılırsa, liste ya
+        // ekran sınırlarının dışına taşar ya da hiç görünmez.
+        int page_size = std::max(1, LINES - LOGO_HEIGHT - 2);
+
+        // Küçülen pencerede highlight/offset artık geçersiz
+        // sınırların dışında kalmasın.
+        if (highlight >= n && n > 0)
+            highlight = n - 1;
+        if (highlight < 0)
+            highlight = 0;
+        if (offset > highlight)
+            offset = highlight;
+        if (offset + page_size <= highlight)
+            offset = highlight - page_size + 1;
+        if (offset < 0)
+            offset = 0;
+
         clear();
 
         int logo_width = 60;
@@ -760,6 +878,11 @@ Screen mainScreen()
             highlight--;
             if (highlight < 0)
             {
+                // Listenin başından sona sarılıyor: gerçek sonu bilmek için
+                // sunucuda kalan tüm sayfalar (varsa) çekilir.
+                while (hasMore)
+                    loadMore();
+                n = (int)questions.size();
                 highlight = n - 1;
                 offset = (n > page_size) ? (n - page_size) : 0;
             }
@@ -771,6 +894,14 @@ Screen mainScreen()
         else if (c == KEY_DOWN)
         {
             highlight++;
+
+            // Görünür pencerenin sonuna yaklaşıldığında, sunucuda daha
+            // fazla soru varsa bir sonraki sayfayı arka planda çek.
+            if (highlight >= n - 1 && hasMore)
+                loadMore();
+
+            n = (int)questions.size();
+
             if (highlight >= n)
             {
                 highlight = 0;
@@ -909,8 +1040,17 @@ static int selectLanguage(const std::vector<codeSnippet> &snippets, int currentI
 // through the normal editor key handling exactly as if autocomplete had
 // never intervened. `pendingKey` is 0 if nothing needs to be redispatched
 // (accepted, or cancelled with Esc).
+//
+// `redrawBase` repaints the full underlying screen (info+code panels,
+// hint bar) from scratch. The popup's size/position changes every
+// keystroke, and a plain delwin() doesn't erase what was already drawn on
+// the physical terminal -- without this, a shrinking or moving popup left
+// visible fragments of its previous frame on screen (looked like two
+// suggestion boxes stacked on top of each other). Calling it right before
+// every popup (re)draw guarantees the screen underneath is clean first.
 static void runLiveAutocomplete(Editor &ed, const std::string &langSlug,
-                                 int codeOriginY, int codeOriginX, int &pendingKey)
+                                 int codeOriginY, int codeOriginX, int &pendingKey,
+                                 const std::function<void()> &redrawBase)
 {
     pendingKey = 0;
     WINDOW *popup = nullptr;
@@ -928,11 +1068,12 @@ static void runLiveAutocomplete(Editor &ed, const std::string &langSlug,
     while (true)
     {
         std::string prefix = wordPrefixAtCursor(ed);
-        std::vector<std::string> suggestions = autocompleteSuggestions(prefix, langSlug);
+        std::vector<std::string> suggestions = autocompleteSuggestions(prefix, langSlug, ed);
 
         if (prefix.empty() || suggestions.empty())
         {
             closePopup();
+            redrawBase(); // önceki popup'tan kalmış olabilecek izleri temizle
             return;
         }
 
@@ -971,7 +1112,8 @@ static void runLiveAutocomplete(Editor &ed, const std::string &langSlug,
         if (boxX < 0)
             boxX = 0;
 
-        closePopup(); // size/position can change every keystroke -- rebuild cleanly
+        closePopup();  // size/position can change every keystroke -- rebuild cleanly
+        redrawBase();  // ekranı temiz bir tuvale döndür, sonra popup'ı üstüne çiz
         popup = newwin(boxHeight, boxWidth, boxY, boxX);
         keypad(popup, TRUE);
 
@@ -1014,11 +1156,13 @@ static void runLiveAutocomplete(Editor &ed, const std::string &langSlug,
             for (char ch : remainder)
                 ed.insertChar(ch);
             closePopup();
+            redrawBase();
             return;
         }
         else if (c == 27) // Esc: cancel, leave whatever was already typed as-is
         {
             closePopup();
+            redrawBase();
             return;
         }
         else if (c == KEY_BACKSPACE || c == 127 || c == 8)
@@ -1036,6 +1180,7 @@ static void runLiveAutocomplete(Editor &ed, const std::string &langSlug,
             // the key back so it's handled exactly like it would be without
             // autocomplete in the picture.
             closePopup();
+            redrawBase();
             pendingKey = c;
             return;
         }
@@ -1229,11 +1374,94 @@ static bool findMatchingBracket(const Editor &ed, const std::vector<std::vector<
     }
 }
 
-static void renderEditor(WINDOW *pad, Editor &ed, int visibleHeight)
+// Basit, harici bağımlılık gerektirmeyen bir "Format Code" (Ctrl+F).
+// clang-format kadar kapsamlı değil, ama VSCode/JetBrains'teki gibi
+// süslü parantez derinliğine göre otomatik yeniden girintileme yapar:
+// satır sonu boşlukları temizlenir ve her satır, o satıra kadar açık
+// kalan {, ( ve [ sayısına göre TAB_WIDTH katları kadar içeri kaydırılır.
+// computeCodeMask() sayesinde string/char literal veya yorum içindeki
+// sahte parantezler ("if (c == '}')" gibi) sayıma dahil edilmez.
+static void formatCode(Editor &ed)
 {
+    if (ed.lines.empty())
+        return;
+
+    auto mask = computeCodeMask(ed.lines);
+    int depth = 0;
+
+    for (int i = 0; i < (int)ed.lines.size(); i++)
+    {
+        std::string &line = ed.lines[i];
+
+        size_t end = line.size();
+        while (end > 0 && (line[end - 1] == ' ' || line[end - 1] == '\t'))
+            end--;
+        line.erase(end);
+
+        size_t start = 0;
+        while (start < line.size() && (line[start] == ' ' || line[start] == '\t'))
+            start++;
+        std::string content = line.substr(start);
+
+        if (content.empty())
+        {
+            line.clear();
+            continue;
+        }
+
+        const auto &rowMask = (i < (int)mask.size()) ? mask[i] : std::vector<bool>();
+        auto isCode = [&](size_t col)
+        { return col >= rowMask.size() || rowMask[col]; };
+
+        // Kapanış parantezi/süslü parantez/köşeli parantezle başlayan bir
+        // satır, bir kademe daha az girintilenir (bloğu açan satırla aynı
+        // hizaya gelsin diye) - ama bu sadece o satırın kendi girintisi
+        // için geçerli; `depth`'in kalıcı değeri aşağıdaki taramada güncellenir.
+        int lineDepth = depth;
+        if (isCode(start) && (content[0] == '}' || content[0] == ')' || content[0] == ']'))
+            lineDepth = std::max(0, depth - 1);
+
+        line = std::string(lineDepth * Editor::TAB_WIDTH, ' ') + content;
+
+        for (size_t c = 0; c < content.size(); c++)
+        {
+            if (!isCode(start + c))
+                continue;
+            char ch = content[c];
+            if (ch == '{' || ch == '(' || ch == '[')
+                depth++;
+            else if (ch == '}' || ch == ')' || ch == ']')
+                depth = std::max(0, depth - 1);
+        }
+    }
+
+    ed.cursor.row = std::min(ed.cursor.row, (int)ed.lines.size() - 1);
+    ed.cursor.col = std::min(ed.cursor.col, (int)ed.lines[ed.cursor.row].size());
+    ed.scrollOffset = 0;
+    ed.hScrollOffset = 0;
+}
+
+static void renderEditor(WINDOW *pad, Editor &ed, int visibleHeight, int visibleWidth)
+{
+    // Satırlar çok uzarsa (satır sayısı ya da tek bir satırın karakter
+    // sayısı) pad'i büyüt. wresize aynı WINDOW* üzerinde çalışır, pointer
+    // değişmez -- pad her keystroke'ta yeniden oluşturulmaz.
+    int gutterWidthForSize = codeGutterWidth(ed);
+    int maxLineLen = 0;
+    for (auto &l : ed.lines)
+        maxLineLen = std::max(maxLineLen, (int)l.size());
+
+    int neededRows = std::max((int)ed.lines.size() + 50, visibleHeight);
+    int neededCols = std::max({visibleWidth, maxLineLen + gutterWidthForSize + 40, 200});
+
+    int curRows, curCols;
+    getmaxyx(pad, curRows, curCols);
+    if (neededRows > curRows || neededCols > curCols)
+        wresize(pad, std::max(neededRows, curRows), std::max(neededCols, curCols));
+
     werase(pad);
 
-    // Keep the cursor inside the visible window by adjusting scrollOffset.
+    // Keep the cursor inside the visible window by adjusting scrollOffset (dikey).
     if (ed.cursor.row < ed.scrollOffset)
         ed.scrollOffset = ed.cursor.row;
     else if (ed.cursor.row >= ed.scrollOffset + visibleHeight)
@@ -1243,6 +1471,22 @@ static void renderEditor(WINDOW *pad, Editor &ed, int visibleHeight)
 
     // Satır numarası gutter'ı: LeetCode/VSCode benzeri sol kenar sütunu.
     int gutterWidth = codeGutterWidth(ed);
+
+    // Yatay scroll: imleç metin alanının solunda/sağında kalırsa
+    // hScrollOffset'i güncelle. Gutter genişliği çıkarıldıktan sonra kalan
+    // alan gerçek yazı alanı (textAreaWidth).
+    int textAreaWidth = std::max(1, visibleWidth - gutterWidth);
+    if (ed.cursor.col < ed.hScrollOffset)
+        ed.hScrollOffset = ed.cursor.col;
+    else if (ed.cursor.col >= ed.hScrollOffset + textAreaWidth)
+        ed.hScrollOffset = ed.cursor.col - textAreaWidth + 1;
+    if (ed.hScrollOffset < 0)
+        ed.hScrollOffset = 0;
+
+    // Gutter'ı pad'in hScrollOffset kolonundan başlatarak çiziyoruz; böylece
+    // prefresh çağrısı pad'i hScrollOffset kadar sağdan başlatınca, gutter
+    // ekranın en solunda "yapışık" kalır ve sadece kod metni kayar.
+    int textStart = ed.hScrollOffset + gutterWidth;
 
     std::vector<std::vector<bool>> mask = computeCodeMask(ed.lines);
 
@@ -1265,19 +1509,31 @@ static void renderEditor(WINDOW *pad, Editor &ed, int visibleHeight)
 
     for (int i = 0; i < (int)ed.lines.size(); i++)
     {
-        wattron(pad, A_DIM);
-        mvwprintw(pad, i, 0, "%*d", gutterWidth - 1, i + 1);
-        wattroff(pad, A_DIM);
-        mvwprintw(pad, i, gutterWidth, "%s", ed.lines[i].c_str());
+        bool isCurrentLine = (i == ed.cursor.row);
+
+        // Aktif satırın numarası: normalde dim, imlecin olduğu satırda
+        // bold + renkli -- hangi satırda olduğunu ekranda kaymadan görmek
+        // için (özellikle yatay scroll açıkken çok işe yarıyor).
+        if (isCurrentLine)
+            wattron(pad, COLOR_PAIR(PAIR_LOGO_CMD) | A_BOLD);
+        else
+            wattron(pad, A_DIM);
+        mvwprintw(pad, i, ed.hScrollOffset, "%*d", gutterWidth - 1, i + 1);
+        if (isCurrentLine)
+            wattroff(pad, COLOR_PAIR(PAIR_LOGO_CMD) | A_BOLD);
+        else
+            wattroff(pad, A_DIM);
+
+        mvwprintw(pad, i, textStart, "%s", ed.lines[i].c_str());
     }
 
     // Eşleşen parantez çiftini vurgula.
     if (matchRow != -1)
     {
         wattron(pad, COLOR_PAIR(PAIR_BRACKET_MATCH) | A_BOLD);
-        mvwaddch(pad, cursorBracketRow, gutterWidth + cursorBracketCol,
+        mvwaddch(pad, cursorBracketRow, ed.hScrollOffset + gutterWidth + cursorBracketCol,
                  (unsigned char)ed.lines[cursorBracketRow][cursorBracketCol] | COLOR_PAIR(PAIR_BRACKET_MATCH) | A_BOLD);
-        mvwaddch(pad, matchRow, gutterWidth + matchCol,
+        mvwaddch(pad, matchRow, ed.hScrollOffset + gutterWidth + matchCol,
                  (unsigned char)ed.lines[matchRow][matchCol] | COLOR_PAIR(PAIR_BRACKET_MATCH) | A_BOLD);
         wattroff(pad, COLOR_PAIR(PAIR_BRACKET_MATCH) | A_BOLD);
     }
@@ -1287,7 +1543,7 @@ static void renderEditor(WINDOW *pad, Editor &ed, int visibleHeight)
     chtype under = ' ';
     if (ed.cursor.col < (int)ed.lines[ed.cursor.row].size())
         under = (unsigned char)ed.lines[ed.cursor.row][ed.cursor.col];
-    mvwaddch(pad, ed.cursor.row, gutterWidth + ed.cursor.col, under | A_REVERSE);
+    mvwaddch(pad, ed.cursor.row, ed.hScrollOffset + gutterWidth + ed.cursor.col, under | A_REVERSE);
 }
 
 Screen questionScreen()
@@ -1367,15 +1623,17 @@ Screen questionScreen()
     Editor ed;
     ed.loadText(codeText);
 
-    auto setupWindows = [&]()
+    // Split iki panelin (bilgi + kod) anlamlı biçimde sığması için
+    // gereken en küçük terminal boyutu. Bundan küçük bir terminalde
+    // newwin() negatif/sıfır boyutla çağrılabiliyordu; bu da pencereleri
+    // NULL bırakıp ekranın sadece alt bilgi çubuğuyla boş görünmesine
+    // (tam olarak bildirilen hataya) yol açıyordu.
+    static const int MIN_ROWS = 12;
+    static const int MIN_COLS = 50;
+    bool screenTooSmall = false;
+
+    auto closeWindows = [&]()
     {
-        getmaxyx(stdscr, rows, cols);
-        half = cols / 2;
-        if (half < 10)
-            half = 10;
-
-        winHeight = rows - 1; // bottom line reserved for the shortcut bar
-
         if (questionInformation)
             delwin(questionInformation);
         if (questionCode)
@@ -1384,6 +1642,25 @@ Screen questionScreen()
             delwin(infoPad);
         if (codePad)
             delwin(codePad);
+        questionInformation = questionCode = nullptr;
+        infoPad = codePad = nullptr;
+    };
+
+    auto setupWindows = [&]()
+    {
+        getmaxyx(stdscr, rows, cols);
+
+        closeWindows();
+
+        screenTooSmall = (rows < MIN_ROWS || cols < MIN_COLS);
+        if (screenTooSmall)
+            return; // pencereler NULL kalır; refreshAll() bir uyarı basar
+
+        half = cols / 2;
+        if (half < 10)
+            half = 10;
+
+        winHeight = rows - 1; // bottom line reserved for the shortcut bar
 
         questionInformation = newwin(winHeight, half, 0, 0);
         questionCode = newwin(winHeight, cols - half, 0, half);
@@ -1408,6 +1685,18 @@ Screen questionScreen()
 
     auto refreshAll = [&]()
     {
+        if (screenTooSmall)
+        {
+            clear();
+            std::string msg = "Terminal too small - please enlarge the window";
+            std::string msg2 = "(min " + std::to_string(MIN_COLS) + "x" + std::to_string(MIN_ROWS) + ", Q to go back)";
+            int midY = std::max(0, rows / 2);
+            mvprintw(midY, std::max(0, (cols - (int)msg.size()) / 2), "%s", msg.c_str());
+            mvprintw(midY + 1, std::max(0, (cols - (int)msg2.size()) / 2), "%s", msg2.c_str());
+            refresh();
+            return;
+        }
+
         wattron(questionInformation, focus == FOCUS_INFO ? A_BOLD : A_NORMAL);
         box(questionInformation, 0, 0);
         wattroff(questionInformation, A_BOLD);
@@ -1416,18 +1705,29 @@ Screen questionScreen()
         box(questionCode, 0, 0);
         wattroff(questionCode, A_BOLD);
 
-        wrefresh(questionInformation);
-        wrefresh(questionCode);
-
-        renderEditor(codePad, ed, visibleHeight);
-
-        prefresh(infoPad, infoScroll, 0, 1, 1, winHeight - 2, half - 2);
-        prefresh(codePad, ed.scrollOffset, 0, 1, half + 1, winHeight - 2, cols - 2);
+        renderEditor(codePad, ed, visibleHeight, codeWidth);
 
         attron(A_DIM);
-        mvprintw(rows - 1, 1, "Shift+TAB: Switch Panel | TAB: Indent/Autocomplete | Arrows: Move/Scroll | Enter/Backspace: Edit | R: Run | S: Submit | L: Language | Q: Back");
+        mvprintw(rows - 1, 1, "F2/Shift+TAB: Switch Panel | TAB: Indent/Autocomplete | Ctrl+F: Format | Arrows: Move/Scroll | Enter/Backspace: Edit | R: Run | S: Submit | L: Language | Q: Back");
         attroff(A_DIM);
-        refresh();
+
+        // questionInformation/questionCode (normal windows) and stdscr (the
+        // footer line) all cover overlapping screen real-estate. Mixing
+        // wrefresh()/prefresh()/refresh() here used to call doupdate() FOUR
+        // separate times per frame -- each of those calls syncs the physical
+        // terminal from whatever ncurses currently considers "changed", and
+        // the final plain refresh() (== wrefresh(stdscr)) could win that
+        // race and paint stdscr's mostly-blank buffer over the panels that
+        // had just been drawn, leaving only the footer line visible. Queuing
+        // every window with *noutrefresh (no physical sync) and calling
+        // doupdate() exactly once composites all of them together in a
+        // single atomic pass, so nothing can stomp anything else.
+        wnoutrefresh(questionInformation);
+        wnoutrefresh(questionCode);
+        pnoutrefresh(infoPad, infoScroll, 0, 1, 1, winHeight - 2, half - 2);
+        pnoutrefresh(codePad, ed.scrollOffset, ed.hScrollOffset, 1, half + 1, winHeight - 2, cols - 2);
+        wnoutrefresh(stdscr);
+        doupdate();
     };
 
     setupWindows();
@@ -1439,9 +1739,31 @@ Screen questionScreen()
 
         if (c == KEY_RESIZE)
         {
+            // Modern ncurses'in kendi SIGWINCH/KEY_RESIZE algılaması zaten
+            // getch() KEY_RESIZE döndürmeden ÖNCE LINES/COLS'u doğru şekilde
+            // güncelliyor -- resize_term(0,0) çağırmak buna gerek bırakmıyor
+            // ve daha kötüsü, curscr'nin (doupdate()'in fiziksel ekranla
+            // karşılaştırdığı iç referans) boyut takibini bozup sonraki
+            // doupdate() çağrısının bazı hücrelerin zaten doğru olduğunu
+            // yanlışlıkla sanıp onları hiç yazmamasına yol açabiliyordu --
+            // tam da gözlemlenen belirti (resize öncesi sorunsuz, resize
+            // sonrası panel/pad içeriği kayboluyor) bununla örtüşüyor.
+            // endwin()+refresh() curscr'yi tamamen geçersiz kılar, böylece
+            // sıradaki doupdate() ekranın tamamını garanti şekilde yeniden
+            // çizer.
             endwin();
             refresh();
+            clear();
+            refresh();
             setupWindows();
+        }
+        else if (screenTooSmall)
+        {
+            // Pencereler yok (NULL): sadece çıkışa izin ver, başka hiçbir
+            // tuşu editör/panel mantığına yönlendirme (aksi halde NULL
+            // pencerelere erişilip çökebilir).
+            if (c == 'q' || c == 'Q')
+                break;
         }
         else if (c == '\t')
         {
@@ -1458,11 +1780,11 @@ Screen questionScreen()
                 std::string prefix = wordPrefixAtCursor(ed);
                 if (!prefix.empty())
                 {
-                    std::vector<std::string> suggestions = autocompleteSuggestions(prefix, selectedLangSlug);
+                    std::vector<std::string> suggestions = autocompleteSuggestions(prefix, selectedLangSlug, ed);
                     if (!suggestions.empty())
                     {
                         int pendingKey = 0;
-                        runLiveAutocomplete(ed, selectedLangSlug, 1, half + 1, pendingKey);
+                        runLiveAutocomplete(ed, selectedLangSlug, 1, half + 1, pendingKey, refreshAll);
                         handledAsAutocomplete = true;
                     }
                 }
@@ -1475,7 +1797,7 @@ Screen questionScreen()
                 focus = FOCUS_CODE;
             }
         }
-        else if (c == KEY_BTAB) // Shift+Tab: panel değiştir (Tab artık girinti için)
+        else if (c == KEY_BTAB || c == KEY_F(2)) // Shift+Tab veya F2: panel değiştir (Tab artık girinti için)
         {
             focus = (focus == FOCUS_INFO) ? FOCUS_CODE : FOCUS_INFO;
         }
@@ -1510,10 +1832,7 @@ Screen questionScreen()
                 lastRunTestcaseList = q.exampleTestcaseList;
                 lastRunTestcases = joinTestcases(lastRunTestcaseList);
 
-                delwin(infoPad);
-                delwin(codePad);
-                delwin(questionInformation);
-                delwin(questionCode);
+                closeWindows();
 
                 return SCREEN_RUN;
             }
@@ -1523,10 +1842,7 @@ Screen questionScreen()
                 lastEditedSlug = selectedQuestionSlug;
                 lastEditedLangSlug = selectedLangSlug;
 
-                delwin(infoPad);
-                delwin(codePad);
-                delwin(questionInformation);
-                delwin(questionCode);
+                closeWindows();
 
                 return SCREEN_SUBMIT;
             }
@@ -1643,10 +1959,7 @@ Screen questionScreen()
                 lastRunTestcaseList = q.exampleTestcaseList;
                 lastRunTestcases = joinTestcases(lastRunTestcaseList);
 
-                delwin(infoPad);
-                delwin(codePad);
-                delwin(questionInformation);
-                delwin(questionCode);
+                closeWindows();
 
                 return SCREEN_RUN;
             }
@@ -1656,10 +1969,7 @@ Screen questionScreen()
                 lastEditedSlug = selectedQuestionSlug;
                 lastEditedLangSlug = selectedLangSlug;
 
-                delwin(infoPad);
-                delwin(codePad);
-                delwin(questionInformation);
-                delwin(questionCode);
+                closeWindows();
 
                 return SCREEN_SUBMIT;
             }
@@ -1679,6 +1989,10 @@ Screen questionScreen()
                     setupWindows();
                 }
             }
+            else if (c == 6) // Ctrl+F: reindent the whole buffer (see formatCode())
+            {
+                formatCode(ed);
+            }
             else if (isprint(c))
             {
                 ed.insertCharSmart((char)c);
@@ -1692,10 +2006,10 @@ Screen questionScreen()
                 if (isalnum((unsigned char)c) || c == '_')
                 {
                     std::string prefix = wordPrefixAtCursor(ed);
-                    if (prefix.size() >= 2)
+                    if (prefix.size() >= 1)
                     {
                         int pendingKey = 0;
-                        runLiveAutocomplete(ed, selectedLangSlug, 1, half + 1, pendingKey);
+                        runLiveAutocomplete(ed, selectedLangSlug, 1, half + 1, pendingKey, refreshAll);
 
                         if (pendingKey == KEY_UP)
                             ed.moveUp();
@@ -1730,10 +2044,7 @@ Screen questionScreen()
         refreshAll();
     }
 
-    delwin(infoPad);
-    delwin(codePad);
-    delwin(questionInformation);
-    delwin(questionCode);
+    closeWindows();
 
     return SCREEN_MAIN;
 }

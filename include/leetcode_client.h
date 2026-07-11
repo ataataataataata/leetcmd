@@ -168,7 +168,15 @@ struct runDetail
     std::string state;
 };
 
+struct QuestionPage
+{
+    std::vector<questionAtList> questions;
+    bool hasMore;
+    int totalLength;
+};
+
 std::vector<questionAtList> getAllQuestions();
+QuestionPage getQuestions(int skip, int limit = 100);
 void printGetAllQuestions();
 questionDetail getQuestionDetail(std::string titleSlug);
 void printGetQuestionDetail(std::string titleSlug);

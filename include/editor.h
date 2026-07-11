@@ -18,7 +18,8 @@ struct Editor {
 
     std::vector<std::string> lines;
     CursorPos cursor;
-    int scrollOffset = 0; // pad'de en üstte görünen satır index'i
+    int scrollOffset = 0;  // pad'de en üstte görünen satır index'i (dikey scroll)
+    int hScrollOffset = 0; // pad'de en solda görünen kolon index'i (yatay scroll)
 
     Editor() { lines.push_back(""); }
 
