@@ -211,15 +211,15 @@ struct globalData
 
 struct FollowData
 {
-    int followers;
-    int following;
+    int followers = 0;
+    int following = 0;
 };
 
 // digerinin icinde
 struct LanguageProblem
 {
     std::string languageName;
-    int problemsSolved;
+    int problemsSolved = 0;
 };
 
 struct LanguageProblemData
@@ -232,7 +232,7 @@ struct TagProblem
 {
     std::string tagName;
     std::string tagSlug;
-    int problemsSolved;
+    int problemsSolved = 0;
 };
 
 struct TagProblemCounts
@@ -245,7 +245,7 @@ struct TagProblemCounts
 //digerinin icinde
 struct QuestionCount
 {
-    int count;
+    int count = 0;
     std::string difficulty;
 };
 
@@ -253,7 +253,7 @@ struct QuestionCount
 struct QuestionBeatPercentage
 {
     std::string difficulty;
-    double percentage;
+    double percentage = 0.0;
 };
 
 struct QuestionProgress
@@ -264,22 +264,22 @@ struct QuestionProgress
 
     std::vector<QuestionBeatPercentage> userSessionBeatsPercentage;
 
-    double totalQuestionBeatsPercentage;
+    double totalQuestionBeatsPercentage = 0.0;
 };
 
 //digerinin icinde
 struct AllQuestionsCount
 {
     std::string difficulty;
-    int count;
+    int count = 0;
 };
 
 //digerinin icinde 
 struct SubmissionStat
 {
     std::string difficulty;
-    int count;
-    int submissions;
+    int count = 0;
+    int submissions = 0;
 };
 
 struct SubmitStats
@@ -314,5 +314,6 @@ LanguageProblemData getLanguageStats(std::string userSlug);
 TagProblemCounts getSkillStats(std::string userSlug);
 QuestionProgress getUserProfileUserQuestionProgressV2(std::string userSlug);
 SubmitStats getuserSessionProgress(std::string userSlug);
+MePage getMePage(std::string userSlug);
 
 #endif // LEETCMD_LEETCODE_CLIENT_H

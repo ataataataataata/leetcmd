@@ -422,7 +422,13 @@ void initColors()
     start_color();
     use_default_colors();
 
-    init_pair(PAIR_EASY, COLOR_GREEN, -1);
+    // Easy artık yeşil değil, turkuaz -- 256 renkli terminallerde gerçek bir
+    // turkuaz tonu (44), desteklenmeyen terminallerde en yakın standart renk
+    // olan cyan'a düşer.
+    if (COLORS >= 256)
+        init_pair(PAIR_EASY, 44, -1);
+    else
+        init_pair(PAIR_EASY, COLOR_CYAN, -1);
     init_pair(PAIR_MEDIUM, COLOR_YELLOW, -1);
     init_pair(PAIR_HARD, COLOR_RED, -1);
 
@@ -1012,7 +1018,7 @@ Screen mainScreen()
             attroff(attrs);
         }
 
-        mvprintw(LINES - 1, 1, "Up/Down: Navigate | Enter: Select | /: Search | Q: Quit");
+        drawHintBar(LINES - 1, COLS, "Up/Down: Navigate | Enter: Select | /: Search | P: Profile | Q: Quit");
         refresh();
 
         int c = getch();
@@ -1103,6 +1109,10 @@ Screen mainScreen()
                 // term boş ve zaten arama yoksa: hiçbir şey değişmedi,
                 // popup kapanıp normal listeye dönülür.
             }
+        }
+        else if (c == 'p' || c == 'P')
+        {
+            return SCREEN_PROFILE;
         }
         else if (c == 'q' || c == 'Q')
         {
@@ -1893,9 +1903,7 @@ Screen questionScreen()
 
         renderEditor(codePad, ed, visibleHeight, codeWidth);
 
-        attron(A_DIM);
-        mvprintw(rows - 1, 1, "F2/Shift+TAB: Switch Panel | TAB: Indent/Autocomplete | Ctrl+F: Format | Arrows: Move/Scroll | Enter/Backspace: Edit | R: Run | S: Submit | L: Language | Q: Back");
-        attroff(A_DIM);
+        drawHintBar(rows - 1, cols, "F2/Shift+TAB: Switch Panel | TAB: Indent/Autocomplete | Ctrl+F: Format | Arrows: Move/Scroll | Enter/Backspace: Edit | R: Run | S: Submit | L: Language | Q: Back");
 
         // questionInformation/questionCode (normal windows) and stdscr (the
         // footer line) all cover overlapping screen real-estate. Mixing
@@ -2790,6 +2798,294 @@ Screen runScreen()
     return SCREEN_QUESTION;
 }
 
+// --- Profile Screen (MePage) --------------------------------------------
+// leetcode.com/u/<user> profilinin sadeleştirilmiş bir terminal görünümü:
+// zorluk bazlı çözülen/toplam soru sayıları, en çok kullanılan diller ve
+// öne çıkan yetenek (skill tag) etiketleri. Web sitesindeki ısı haritası,
+// rozetler, rank gibi öğeler burada yok -- API'den zaten aldığımız ve
+// terminalde anlamlı gösterilebilecek kısımlara odaklanıldı.
+
+// numAcceptedQuestions / userSessionBeatsPercentage gibi difficulty bazlı
+// listelerden belirli bir "difficulty" değerine karşılık gelen sayıyı
+// bulur; bulunamazsa 0 döner.
+static int findCountByDifficulty(const std::vector<QuestionCount> &counts, const std::string &difficulty)
+{
+    for (auto &c : counts)
+        if (c.difficulty == difficulty)
+            return c.count;
+    return 0;
+}
+
+static int findCountByDifficulty(const std::vector<AllQuestionsCount> &counts, const std::string &difficulty)
+{
+    for (auto &c : counts)
+        if (c.difficulty == difficulty)
+            return c.count;
+    return 0;
+}
+
+// solved/total oranını "[####------]" biçiminde bir bara çevirir
+// (percentileBar ile aynı fikir, ama yüzde yerine ham count/max oranı
+// üzerinden -- dil/etiket barlarında elimizde "yüzde" değil "sayı" var).
+static std::string ratioBar(int part, int whole, int width)
+{
+    if (width < 6)
+        width = 6;
+    int inner = width - 2;
+    double frac = whole > 0 ? (double)part / (double)whole : 0.0;
+    if (frac < 0)
+        frac = 0;
+    if (frac > 1)
+        frac = 1;
+    int filled = (int)(frac * inner + 0.5);
+    filled = std::max(0, std::min(inner, filled));
+
+    std::string bar = "[";
+    bar += std::string(filled, '#');
+    bar += std::string(inner - filled, '-');
+    bar += "]";
+    return bar;
+}
+
+Screen profileScreen()
+{
+    curs_set(0);
+
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+    drawStatusBox(rows, cols, "Loading profile...", 0);
+
+    // getMePage tek bir userSlug bekliyor; kullanıcının kendi profilini
+    // istiyoruz, o yüzden önce globalData'dan oturum sahibinin username'ini
+    // öğreniyoruz.
+    globalData me = getglobalData();
+    MePage page = getMePage(me.username);
+
+    int totalSolved = findCountByDifficulty(page.questionProgress.numAcceptedQuestions, "All");
+    int totalCount = findCountByDifficulty(page.submitStats.allQuestionsCount, "All");
+
+    struct DiffRow
+    {
+        std::string label;
+        int pair;
+    };
+    std::vector<DiffRow> diffs = {
+        {"Easy", PAIR_EASY}, {"Medium", PAIR_MEDIUM}, {"Hard", PAIR_HARD}};
+
+    // Diller: en çok çözülenden aza sırala.
+    std::vector<LanguageProblem> languages = page.languageProblemData.languageProblemCount;
+    std::sort(languages.begin(), languages.end(), [](const LanguageProblem &a, const LanguageProblem &b)
+              { return a.problemsSolved > b.problemsSolved; });
+
+    // Skill etiketleri: her kategoride en çok çözülen ilk 5 tanesi (liste
+    // web sitesindekiyle aynı şekilde onlarca etiket içerebiliyor, hepsini
+    // basmak dar bir terminalde okunmaz bir yığın oluşturuyor).
+    auto topTags = [](std::vector<TagProblem> tags, size_t limit)
+    {
+        std::sort(tags.begin(), tags.end(), [](const TagProblem &a, const TagProblem &b)
+                  { return a.problemsSolved > b.problemsSolved; });
+        if (tags.size() > limit)
+            tags.resize(limit);
+        return tags;
+    };
+    std::vector<TagProblem> advancedTop = topTags(page.tagProblemCounts.advanced, 5);
+    std::vector<TagProblem> intermediateTop = topTags(page.tagProblemCounts.intermediate, 5);
+    std::vector<TagProblem> fundamentalTop = topTags(page.tagProblemCounts.fundamental, 5);
+
+    // Bir zorluk/dil/etiket satırını -- opsiyonel renkle -- basıp satır
+    // sayacını ilerleten yardımcı, aşağıdaki tekrar eden bloklar için.
+    // Artık stdscr yerine profil kartının WINDOW*'una basıyor. Tek satıra
+    // sığmayan etiket listesini "..." ile kesmek yerine gerektiği kadar
+    // satıra sarıyor, böylece hiçbir skill kaybolmuyor.
+    auto printTagGroup = [&](WINDOW *win, int &row, int startX, int contentWidth, int maxRow,
+                              const std::string &label, const std::vector<TagProblem> &tags)
+    {
+        if (row > maxRow)
+            return;
+
+        wattron(win, A_BOLD);
+        mvwprintw(win, row, startX, "%s", label.c_str());
+        wattroff(win, A_BOLD);
+        row++;
+
+        if (tags.empty())
+        {
+            if (row > maxRow)
+                return;
+            wattron(win, A_DIM);
+            mvwprintw(win, row, startX, "  (none)");
+            wattroff(win, A_DIM);
+            row++;
+            return;
+        }
+
+        int wrapWidth = std::max(10, contentWidth - 2); // "  " girinti payı
+        std::string line;
+        for (size_t i = 0; i < tags.size() && row <= maxRow; i++)
+        {
+            std::string piece = tags[i].tagName + " (" + std::to_string(tags[i].problemsSolved) + ")";
+            if (i + 1 < tags.size())
+                piece += ", ";
+
+            if (!line.empty() && (int)(line.size() + piece.size()) > wrapWidth)
+            {
+                mvwprintw(win, row, startX, "  %s", line.c_str());
+                row++;
+                line.clear();
+                if (row > maxRow)
+                    break;
+            }
+            line += piece;
+        }
+        if (!line.empty() && row <= maxRow)
+        {
+            mvwprintw(win, row, startX, "  %s", line.c_str());
+            row++;
+        }
+    };
+
+    // Bölüm başlıkları arasına ince bir ayraç çizgisi çeker (kart görünümünü
+    // düz bir metin dökümü olmaktan çıkarıp bölümleri görsel olarak ayırır).
+    // Kutunun kendisi gibi turuncu değil, diğer tüm içerikle aynı nötr renkte.
+    auto drawSeparator = [&](WINDOW *win, int &row, int boxWidth)
+    {
+        mvwhline(win, row, 1, ACS_HLINE, std::max(0, boxWidth - 2));
+        row++;
+    };
+
+    static const int MIN_ROWS = 10;
+    static const int MIN_COLS = 34;
+
+    while (1)
+    {
+        getmaxyx(stdscr, rows, cols);
+        clear();
+
+        if (rows < MIN_ROWS || cols < MIN_COLS)
+        {
+            std::string msg = "Terminal too small for profile view";
+            mvprintw(std::max(0, rows / 2), std::max(0, (cols - (int)msg.size()) / 2), "%s", msg.c_str());
+            drawHintBar(rows - 1, cols, "Q/Esc: Back to list");
+            refresh();
+
+            int c = getch();
+            if (c == 'q' || c == 'Q' || c == 27)
+                return SCREEN_MAIN;
+            continue;
+        }
+
+        // Skill etiketleri artık sarmalandığı için kutu biraz daha geniş --
+        // aynı satır sayısı içinde daha az sarmalama, daha az kesilen içerik.
+        int contentWidth = std::min(cols - 8, 92);
+        int boxWidth = contentWidth + 6;
+        int boxHeight = rows - 1;
+        int maxRow = boxHeight - 2;
+        int boxX = std::max(0, (cols - boxWidth) / 2);
+        int startX = 3; // relative to the window, left padding inside the border
+
+        WINDOW *win = newwin(boxHeight, boxWidth, 0, boxX);
+
+        // Tek renkli tema: sadece en dıştaki kutu turuncu, geri kalan her
+        // şey terminalin varsayılan siyah/beyazında.
+        wattron(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
+        box(win, 0, 0);
+        wattroff(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
+
+        std::string title = " " + (me.username.empty() ? "Profile" : me.username) + " ";
+        wattron(win, A_BOLD);
+        mvwprintw(win, 0, std::max(1, (boxWidth - (int)title.size()) / 2), "%s", title.c_str());
+        wattroff(win, A_BOLD);
+
+        int row = 2;
+
+        mvwprintw(win, row, startX, "Following: %d    Followers: %d",
+                  page.followData.following, page.followData.followers);
+        row++;
+        drawSeparator(win, row, boxWidth);
+        row++;
+
+        wattron(win, A_BOLD);
+        mvwprintw(win, row, startX, "Solved  %d / %d", totalSolved, totalCount);
+        wattroff(win, A_BOLD);
+        row++;
+
+        for (auto &d : diffs)
+        {
+            int solved = findCountByDifficulty(page.questionProgress.numAcceptedQuestions, d.label);
+            int total = findCountByDifficulty(page.submitStats.allQuestionsCount, d.label);
+            std::string bar = ratioBar(solved, total, 30);
+
+            wattron(win, A_BOLD);
+            mvwprintw(win, row, startX, "%-7s", d.label.c_str());
+            wprintw(win, "%s", bar.c_str());
+            wattroff(win, A_BOLD);
+
+            wprintw(win, " %d/%d", solved, total);
+            row++;
+        }
+        row++;
+
+        if (row < maxRow)
+        {
+            drawSeparator(win, row, boxWidth);
+            row++;
+
+            mvwprintw(win, row, startX, "Languages");
+            row++;
+
+            if (languages.empty())
+            {
+                wattron(win, A_DIM);
+                mvwprintw(win, row, startX, "(no submissions yet)");
+                wattroff(win, A_DIM);
+                row++;
+            }
+            else
+            {
+                int maxSolved = languages.front().problemsSolved;
+                int shown = 0;
+                for (auto &lang : languages)
+                {
+                    if (shown >= 6 || row >= maxRow)
+                        break;
+                    std::string bar = ratioBar(lang.problemsSolved, maxSolved, 20);
+                    mvwprintw(win, row, startX, "%-10s %s %d", lang.languageName.c_str(), bar.c_str(), lang.problemsSolved);
+                    row++;
+                    shown++;
+                }
+            }
+            row++;
+        }
+
+        if (row < maxRow)
+        {
+            drawSeparator(win, row, boxWidth);
+            row++;
+
+            wattron(win, A_BOLD);
+            mvwprintw(win, row, startX, "Top Skills");
+            wattroff(win, A_BOLD);
+            row++;
+            printTagGroup(win, row, startX, contentWidth, maxRow, "Advanced", advancedTop);
+            printTagGroup(win, row, startX, contentWidth, maxRow, "Intermediate", intermediateTop);
+            printTagGroup(win, row, startX, contentWidth, maxRow, "Fundamental", fundamentalTop);
+        }
+
+        drawHintBar(rows - 1, cols, "Q/Esc: Back to list");
+        wnoutrefresh(stdscr);
+        wnoutrefresh(win);
+        doupdate();
+
+        delwin(win);
+
+        int c = getch();
+        if (c == 'q' || c == 'Q' || c == 27)
+            return SCREEN_MAIN;
+        // KEY_RESIZE (ve tanımadığımız başka her tuş) döngü başına döner,
+        // bir sonraki turda ekran yeni boyuta göre yeniden çizilir.
+    }
+}
+
 int run_menu()
 {
     initscr();
@@ -2824,6 +3120,10 @@ int run_menu()
 
         case SCREEN_RUN:
             current = runScreen();
+            break;
+
+        case SCREEN_PROFILE:
+            current = profileScreen();
             break;
 
         default:

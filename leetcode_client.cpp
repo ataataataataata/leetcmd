@@ -724,8 +724,8 @@ globalData getglobalData()
     const std::string url = "https://leetcode.com/graphql/";
 
     nlohmann::json j;
-    j["operationalName"] = "globalData";
-    j["quary"] = "\n    query globalData {\n  userStatus {\n    userId\n    isSignedIn\n    isMockUser\n    isPremium\n    premiumCountryCode\n    isVerified\n    username\n    realName\n    avatar\n    isAdmin\n    isSuperuser\n    permissions\n    isTranslator\n    activeSessionId\n    checkedInToday\n    completedFeatureGuides\n    premiumExpiredAt\n    notificationStatus {\n      lastModified\n      numUnread\n    }\n  }\n}\n    ";
+    j["operationName"] = "globalData";
+    j["query"] = "\n    query globalData {\n  userStatus {\n    userId\n    isSignedIn\n    isMockUser\n    isPremium\n    premiumCountryCode\n    isVerified\n    username\n    realName\n    avatar\n    isAdmin\n    isSuperuser\n    permissions\n    isTranslator\n    activeSessionId\n    checkedInToday\n    completedFeatureGuides\n    premiumExpiredAt\n    notificationStatus {\n      lastModified\n      numUnread\n    }\n  }\n}\n    ";
     j["variables"] = {};
 
     std::string response = httpPost(url, j.dump(), headers);
@@ -918,9 +918,9 @@ FollowData getFollowData(std::string userSlug)
     const std::string url = "https://leetcode.com/graphql/";
 
     nlohmann::json j;
-    j["operationalName"] = "followCounts";
-    j["quary"] = "\n    query followCounts($userSlug: String!) {\n  followers(userSlug: $userSlug) {\n    allNum\n  }\n  following(userSlug: $userSlug) {\n    allNum\n  }\n}\n    ";
-    j["variables"] = userSlug;
+    j["operationName"] = "followCounts";
+    j["query"] = "\n    query followCounts($userSlug: String!) {\n  followers(userSlug: $userSlug) {\n    allNum\n  }\n  following(userSlug: $userSlug) {\n    allNum\n  }\n}\n    ";
+    j["variables"]["userSlug"] = userSlug;
 
     std::string response = httpPost(url, j.dump(), headers);
 
@@ -974,9 +974,9 @@ LanguageProblemData getLanguageStats(std::string userSlug)
     const std::string url = "https://leetcode.com/graphql/";
 
     nlohmann::json j;
-    j["operationalName"] = "languageStats";
-    j["quary"] = "\n    query languageStats($username: String!) {\n  matchedUser(username: $username) {\n    languageProblemCount {\n      languageName\n      problemsSolved\n    }\n  }\n}\n    ";
-    j["variables"] = userSlug;
+    j["operationName"] = "languageStats";
+    j["query"] = "\n    query languageStats($username: String!) {\n  matchedUser(username: $username) {\n    languageProblemCount {\n      languageName\n      problemsSolved\n    }\n  }\n}\n    ";
+    j["variables"]["username"] = userSlug;
 
     std::string response = httpPost(url, j.dump(), headers);
 
@@ -1041,9 +1041,9 @@ TagProblemCounts getSkillStats(std::string userSlug)
     const std::string url = "https://leetcode.com/graphql/";
 
     nlohmann::json j;
-    j["operationalName"] = "skillStats";
-    j["quary"] = "\n    query skillStats($username: String!) {\n  matchedUser(username: $username) {\n    tagProblemCounts {\n      advanced {\n        tagName\n        tagSlug\n        problemsSolved\n      }\n      intermediate {\n        tagName\n        tagSlug\n        problemsSolved\n      }\n      fundamental {\n        tagName\n        tagSlug\n        problemsSolved\n      }\n    }\n  }\n}\n    ";
-    j["variables"] = userSlug;
+    j["operationName"] = "skillStats";
+    j["query"] = "\n    query skillStats($username: String!) {\n  matchedUser(username: $username) {\n    tagProblemCounts {\n      advanced {\n        tagName\n        tagSlug\n        problemsSolved\n      }\n      intermediate {\n        tagName\n        tagSlug\n        problemsSolved\n      }\n      fundamental {\n        tagName\n        tagSlug\n        problemsSolved\n      }\n    }\n  }\n}\n    ";
+    j["variables"]["username"] = userSlug;
 
     std::string response = httpPost(url, j.dump(), headers);
 
@@ -1130,9 +1130,9 @@ QuestionProgress getUserProfileUserQuestionProgressV2(std::string userSlug)
     const std::string url = "https://leetcode.com/graphql/";
 
     nlohmann::json j;
-    j["operationalName"] = "userProfileUserQuestionProgressV2";
-    j["quary"] = "\n    query userProfileUserQuestionProgressV2($userSlug: String!) {\n  userProfileUserQuestionProgressV2(userSlug: $userSlug) {\n    numAcceptedQuestions {\n      count\n      difficulty\n    }\n    numFailedQuestions {\n      count\n      difficulty\n    }\n    numUntouchedQuestions {\n      count\n      difficulty\n    }\n    userSessionBeatsPercentage {\n      difficulty\n      percentage\n    }\n    totalQuestionBeatsPercentage\n  }\n}\n    ";
-    j["variables"] = userSlug;
+    j["operationName"] = "userProfileUserQuestionProgressV2";
+    j["query"] = "\n    query userProfileUserQuestionProgressV2($userSlug: String!) {\n  userProfileUserQuestionProgressV2(userSlug: $userSlug) {\n    numAcceptedQuestions {\n      count\n      difficulty\n    }\n    numFailedQuestions {\n      count\n      difficulty\n    }\n    numUntouchedQuestions {\n      count\n      difficulty\n    }\n    userSessionBeatsPercentage {\n      difficulty\n      percentage\n    }\n    totalQuestionBeatsPercentage\n  }\n}\n    ";
+    j["variables"]["userSlug"] = userSlug;
 
     std::string response = httpPost(url, j.dump(), headers);
 
@@ -1240,9 +1240,9 @@ SubmitStats getuserSessionProgress(std::string userSlug)
     const std::string url = "https://leetcode.com/graphql/";
 
     nlohmann::json j;
-    j["operationalName"] = "userSessionProgress";
-    j["quary"] = "\n    query userSessionProgress($username: String!) {\n  allQuestionsCount {\n    difficulty\n    count\n  }\n  matchedUser(username: $username) {\n    submitStats {\n      acSubmissionNum {\n        difficulty\n        count\n        submissions\n      }\n      totalSubmissionNum {\n        difficulty\n        count\n        submissions\n      }\n    }\n  }\n}\n    ";
-    j["variables"] = userSlug;
+    j["operationName"] = "userSessionProgress";
+    j["query"] = "\n    query userSessionProgress($username: String!) {\n  allQuestionsCount {\n    difficulty\n    count\n  }\n  matchedUser(username: $username) {\n    submitStats {\n      acSubmissionNum {\n        difficulty\n        count\n        submissions\n      }\n      totalSubmissionNum {\n        difficulty\n        count\n        submissions\n      }\n    }\n  }\n}\n    ";
+    j["variables"]["username"] = userSlug;
 
     std::string response = httpPost(url, j.dump(), headers);
 
