@@ -3,9 +3,13 @@
 #include "include/gui.h"
 #include "include/html_parser.h"
 #include "include/editor.h"
+
+static int codeGutterWidth(const Editor &ed);
 #include "include/leetcode_client.h"
 #include "include/config_manager.h"
 #include <fstream>
+#include <algorithm>
+#include <unordered_map>
 
 #define LOGO_HEIGHT 6
 #define LOGO_SPLIT_COL 34 // column where "leet" and "cmd" parts split (tune to your font)
@@ -20,11 +24,349 @@
 #define PAIR_SUBMIT_FAIL 7
 #define PAIR_CONFIG_BORDER 8
 #define PAIR_CONFIG_LABEL 9
+#define PAIR_BRACKET_MATCH 10
 
 std::string selectedQuestionSlug;
 std::string selectedQuestionId; // needed by submitCode() as question_id
 std::string selectedLangSlug = "cpp";
 std::string lastSubmittedCode; // code passed forward into the submit screen
+std::string lastRunTestcases;  // sample testcases (joined) passed forward into the run screen
+std::vector<std::string> lastRunTestcaseList; // same testcases, unjoined, for Input/Output pairing in the result view
+
+// Which question/language lastSubmittedCode actually belongs to. Run and
+// Submit both leave questionScreen() and come back to it, and without this
+// questionScreen() has no way to tell "the user edited their code" apart
+// from "this is a fresh visit to the question" -- it would just reload the
+// pristine template from the API every time, silently discarding edits.
+std::string lastEditedSlug;
+std::string lastEditedLangSlug;
+
+// --- Autocomplete keyword tables ---------------------------------------
+// One entry per LeetCode langSlug, covering language keywords plus the
+// standard-library types/functions a competitive programmer reaches for
+// most often while solving a problem. Kept intentionally curated (not an
+// exhaustive dump) so the suggestion list stays short and relevant.
+static const std::unordered_map<std::string, std::vector<std::string>> languageKeywords = {
+    {"cpp", {
+        "include", "define", "namespace", "using", "std", "class", "struct",
+        "public", "private", "protected", "virtual", "override", "template",
+        "typename", "const", "static", "auto", "return", "if", "else", "for",
+        "while", "do", "switch", "case", "break", "continue", "true", "false",
+        "nullptr", "new", "delete", "sizeof", "void", "int", "long", "double",
+        "float", "bool", "char", "string", "vector", "unordered_map",
+        "unordered_set", "map", "set", "multimap", "multiset", "bitset",
+        "pair", "tuple", "queue", "stack", "priority_queue", "deque", "array",
+        "push_back", "pop_back", "emplace_back", "push", "pop", "top", "front",
+        "back", "clear", "at", "first", "second", "begin", "end", "rbegin",
+        "rend", "size", "empty", "resize", "reserve", "insert", "erase",
+        "emplace", "find", "count", "contains", "sort", "reverse", "unique",
+        "rotate", "fill", "iota", "max", "min", "abs", "gcd", "lcm", "swap",
+        "make_pair", "make_tuple", "get", "lower_bound", "upper_bound",
+        "binary_search", "accumulate", "count_if", "all_of", "any_of",
+        "none_of", "nth_element", "partial_sort", "memset", "distance",
+        "next", "prev", "greater", "less", "INT_MAX", "INT_MIN", "LONG_MAX",
+        "LONG_MIN", "LLONG_MAX", "LLONG_MIN", "substr", "length", "append",
+        "to_string", "stoi", "stol", "stoll", "stod", "isalpha", "isdigit",
+        "tolower", "toupper", "numeric_limits", "cout", "cin", "endl"
+    }},
+    {"c", {
+        "include", "define", "int", "long", "double", "float", "char", "void",
+        "struct", "typedef", "enum", "union", "const", "static", "return",
+        "if", "else", "for", "while", "do", "switch", "case", "break",
+        "continue", "malloc", "calloc", "realloc", "free", "sizeof", "printf",
+        "scanf", "strlen", "strcpy", "strcat", "strcmp", "memset", "memcpy",
+        "qsort", "abs", "NULL", "INT_MAX", "INT_MIN", "true", "false"
+    }},
+    {"java", {
+        "public", "private", "protected", "static", "final", "abstract",
+        "class", "interface", "extends", "implements", "void", "int", "long",
+        "double", "float", "boolean", "char", "String", "new", "return", "if",
+        "else", "for", "while", "do", "switch", "case", "break", "continue",
+        "try", "catch", "finally", "throw", "throws", "import", "package",
+        "this", "super", "null", "true", "false", "instanceof",
+        "ArrayList", "LinkedList", "HashMap", "TreeMap", "HashSet", "TreeSet",
+        "PriorityQueue", "ArrayDeque", "List", "Map", "Set", "Queue", "Deque",
+        "Stack", "Arrays", "Collections", "Comparator", "Optional", "Stream",
+        "Collectors", "add", "remove", "get", "put", "size", "isEmpty",
+        "contains", "containsKey", "containsValue", "keySet", "values",
+        "entrySet", "poll", "offer", "peek", "push", "pop", "sort",
+        "compareTo", "equals", "hashCode", "toString", "toCharArray",
+        "charAt", "length", "substring", "split", "stream", "collect",
+        "Math.max", "Math.min", "Math.abs", "Integer.MAX_VALUE",
+        "Integer.MIN_VALUE", "StringBuilder", "System.out.println"
+    }},
+    {"python3", {
+        "def", "class", "self", "return", "if", "elif", "else", "for", "while",
+        "in", "not", "and", "or", "is", "import", "from", "as", "with", "try",
+        "except", "finally", "raise", "lambda", "yield", "pass", "break",
+        "continue", "global", "nonlocal", "None", "True", "False", "print",
+        "len", "range", "list", "dict", "set", "tuple", "str", "int", "float",
+        "sorted", "reversed", "enumerate", "zip", "map", "filter", "any",
+        "all", "sum", "max", "min", "abs", "round", "isinstance", "super",
+        "staticmethod", "classmethod", "property", "append", "extend", "pop",
+        "insert", "remove", "sort", "join", "split", "strip", "replace",
+        "format", "startswith", "endswith", "isdigit", "isalpha",
+        "collections", "defaultdict", "OrderedDict", "Counter", "deque",
+        "heapq", "heappush", "heappop", "bisect", "bisect_left",
+        "bisect_right", "functools", "lru_cache", "reduce", "itertools",
+        "permutations", "combinations", "product", "math", "floor", "ceil",
+        "sqrt", "gcd", "inf"
+    }},
+    {"python", {
+        "def", "class", "self", "return", "if", "elif", "else", "for", "while",
+        "in", "not", "and", "or", "is", "import", "from", "as", "try",
+        "except", "finally", "raise", "lambda", "yield", "pass", "print",
+        "len", "range", "list", "dict", "set", "tuple", "str", "int", "float",
+        "sorted", "reversed", "enumerate", "zip", "map", "filter", "any",
+        "all", "sum", "max", "min", "abs", "append", "extend", "pop",
+        "insert", "remove", "sort", "join", "split", "strip", "replace",
+        "collections", "defaultdict", "Counter", "deque", "heapq", "True",
+        "False", "None"
+    }},
+    {"javascript", {
+        "function", "const", "let", "var", "return", "if", "else", "for",
+        "while", "do", "switch", "case", "break", "continue", "class",
+        "extends", "constructor", "this", "new", "typeof", "instanceof",
+        "null", "undefined", "true", "false", "import", "export", "default",
+        "async", "await", "try", "catch", "finally", "throw", "console.log",
+        "Array", "Map", "Set", "Object", "Number", "String", "Boolean",
+        "Infinity", "NaN", "JSON.stringify", "JSON.parse", "parseInt",
+        "parseFloat", "push", "pop", "shift", "unshift", "slice", "splice",
+        "concat", "join", "length", "map", "filter", "reduce", "forEach",
+        "find", "findIndex", "includes", "indexOf", "some", "every", "sort",
+        "reverse", "keys", "values", "entries", "Math.max", "Math.min",
+        "Math.abs", "Math.floor", "Math.ceil", "Math.sqrt"
+    }},
+    {"typescript", {
+        "function", "const", "let", "var", "return", "if", "else", "for",
+        "while", "do", "switch", "case", "break", "continue", "class",
+        "interface", "extends", "implements", "constructor", "this", "new",
+        "typeof", "instanceof", "null", "undefined", "true", "false",
+        "import", "export", "default", "async", "await", "try", "catch",
+        "finally", "throw", "console.log", "Array", "Map", "Set", "Object",
+        "number", "string", "boolean", "void", "any", "unknown", "never",
+        "readonly", "push", "pop", "shift", "unshift", "slice", "splice",
+        "concat", "join", "length", "map", "filter", "reduce", "forEach",
+        "find", "findIndex", "includes", "indexOf", "some", "every", "sort",
+        "reverse", "keys", "values", "entries", "Math.max", "Math.min",
+        "Math.abs", "Math.floor", "Math.ceil", "Math.sqrt"
+    }},
+    {"csharp", {
+        "using", "namespace", "public", "private", "protected", "static",
+        "final", "abstract", "class", "interface", "int", "long", "double",
+        "float", "bool", "char", "string", "var", "new", "return", "if",
+        "else", "for", "foreach", "while", "do", "switch", "case", "break",
+        "continue", "try", "catch", "finally", "throw", "null", "true",
+        "false", "this", "base", "List", "Dictionary", "HashSet", "SortedSet",
+        "SortedDictionary", "Queue", "Stack", "PriorityQueue", "Array",
+        "Add", "Remove", "Contains", "ContainsKey", "TryGetValue", "Count",
+        "Sort", "Select", "Where", "OrderBy", "ToList", "ToArray", "Push",
+        "Pop", "Peek", "Enqueue", "Dequeue", "Math.Max", "Math.Min",
+        "Math.Abs", "int.Parse", "Convert.ToInt32", "StringBuilder",
+        "Console.WriteLine"
+    }},
+    {"golang", {
+        "func", "package", "import", "var", "const", "type", "struct",
+        "interface", "return", "if", "else", "for", "range", "switch",
+        "case", "break", "continue", "go", "chan", "defer", "select",
+        "make", "new", "len", "cap", "copy", "append", "delete", "nil",
+        "true", "false", "map", "sort.Ints", "sort.Slice", "sort.Strings",
+        "strings.Split", "strings.Join", "strings.Contains", "strconv.Itoa",
+        "strconv.Atoi", "math.Max", "math.Min", "math.Abs", "math.MaxInt64",
+        "fmt.Println", "fmt.Printf", "fmt.Sprintf"
+    }},
+    {"ruby", {
+        "def", "end", "class", "module", "if", "elsif", "else", "unless",
+        "while", "until", "for", "in", "do", "return", "yield", "nil",
+        "true", "false", "self", "puts", "print", "require", "attr_accessor",
+        "attr_reader", "attr_writer", "each", "each_with_index", "map",
+        "map!", "select", "reject", "reduce", "inject", "sort", "sort_by",
+        "min", "max", "sum", "include?", "push", "pop", "shift", "unshift",
+        "join", "split", "gsub", "sub", "to_s", "to_i", "to_a", "length",
+        "Hash.new", "Array.new"
+    }},
+    {"swift", {
+        "func", "var", "let", "class", "struct", "enum", "protocol",
+        "extension", "if", "else", "guard", "for", "in", "while", "switch",
+        "case", "break", "continue", "return", "import", "true", "false",
+        "nil", "self", "print", "map", "filter", "reduce", "sorted",
+        "append", "removeLast", "removeFirst", "insert", "remove", "count",
+        "isEmpty", "contains", "Set", "Array", "Dictionary", "Int.max",
+        "Int.min", "guard let", "if let"
+    }},
+    {"kotlin", {
+        "fun", "val", "var", "class", "object", "interface", "data",
+        "if", "else", "when", "for", "in", "while", "do", "return", "true",
+        "false", "null", "this", "super", "println", "listOf",
+        "mutableListOf", "arrayListOf", "mapOf", "mutableMapOf", "setOf",
+        "mutableSetOf", "filter", "map", "reduce", "fold", "sortedBy",
+        "forEach", "also", "apply", "let", "run", "with", "Int.MAX_VALUE",
+        "Int.MIN_VALUE"
+    }},
+    {"rust", {
+        "fn", "let", "mut", "struct", "enum", "impl", "trait", "if", "else",
+        "match", "for", "in", "while", "loop", "return", "true", "false",
+        "self", "None", "Some", "Ok", "Err", "Option", "Result", "Box", "Rc",
+        "RefCell", "println!", "vec!", "Vec", "HashMap", "HashSet",
+        "BTreeMap", "BTreeSet", "VecDeque", "String", "push", "pop", "iter",
+        "into_iter", "collect", "map", "filter", "fold", "sort", "sort_by",
+        "unwrap", "i32::MAX", "i32::MIN"
+    }},
+    {"php", {
+        "function", "class", "public", "private", "protected", "static",
+        "if", "else", "elseif", "for", "foreach", "while", "do", "switch",
+        "case", "break", "continue", "return", "echo", "print", "true",
+        "false", "null", "array", "new", "this", "array_push", "array_pop",
+        "array_shift", "array_unshift", "array_map", "array_filter",
+        "array_reduce", "array_merge", "count", "sort", "usort", "in_array",
+        "isset", "strlen", "substr", "str_split", "implode", "explode"
+    }},
+    {"scala", {
+        "def", "val", "var", "class", "object", "trait", "case", "if",
+        "else", "for", "while", "do", "match", "return", "true", "false",
+        "this", "None", "Some", "List", "Map", "Set", "Array", "Vector",
+        "println", "map", "filter", "reduce", "fold", "sortBy", "foreach",
+        "mutable.ListBuffer", "mutable.Map"
+    }},
+};
+
+// Returns the identifier ([A-Za-z0-9_]) immediately to the left of the
+// cursor on the current line, i.e. the partial word the user is typing.
+// Empty when the cursor isn't right after an identifier character.
+static std::string wordPrefixAtCursor(const Editor &ed)
+{
+    const std::string &line = ed.lines[ed.cursor.row];
+    int start = ed.cursor.col;
+    while (start > 0 && (isalnum((unsigned char)line[start - 1]) || line[start - 1] == '_'))
+        start--;
+    return line.substr(start, ed.cursor.col - start);
+}
+
+// Filters the keyword table for the given language down to entries that
+// could complete `prefix`. Prefix matches (word starts with what was typed)
+// rank first and are the common case; if there are fewer than 8 of those,
+// substring matches (prefix appears anywhere in the word -- e.g. typing
+// "back" surfaces push_back/pop_back/emplace_back) are appended so the list
+// stays useful even when you don't remember how a name *starts*. Each group
+// is alphabetically sorted, capped to 8 total to keep the popup compact.
+static std::vector<std::string> autocompleteSuggestions(const std::string &prefix, const std::string &langSlug)
+{
+    std::vector<std::string> prefixMatches, substringMatches;
+    if (prefix.empty())
+        return prefixMatches;
+
+    auto it = languageKeywords.find(langSlug);
+    if (it == languageKeywords.end())
+        return prefixMatches;
+
+    for (const auto &kw : it->second)
+    {
+        if (kw.size() <= prefix.size())
+            continue;
+
+        if (kw.compare(0, prefix.size(), prefix) == 0)
+            prefixMatches.push_back(kw);
+        else if (kw.find(prefix) != std::string::npos)
+            substringMatches.push_back(kw);
+    }
+
+    std::sort(prefixMatches.begin(), prefixMatches.end());
+    std::sort(substringMatches.begin(), substringMatches.end());
+
+    std::vector<std::string> results = std::move(prefixMatches);
+    for (auto &kw : substringMatches)
+    {
+        if (results.size() >= 8)
+            break;
+        results.push_back(kw);
+    }
+
+    if (results.size() > 8)
+        results.resize(8);
+    return results;
+}
+
+// Short signature/description shown next to a suggestion in the popup.
+// Currently curated for C++ (the editor's default language and the one
+// most of these problems get solved in); other languages just show the
+// bare keyword with no hint. Extend this table -- or add sibling ones
+// keyed by langSlug -- to cover more languages as needed.
+static const std::unordered_map<std::string, std::string> cppFunctionHints = {
+    {"push_back", "void push_back(const T&)"},
+    {"pop_back", "void pop_back()"},
+    {"emplace_back", "T& emplace_back(Args&&...)"},
+    {"size", "size_t size() const"},
+    {"empty", "bool empty() const"},
+    {"clear", "void clear()"},
+    {"resize", "void resize(size_t)"},
+    {"reserve", "void reserve(size_t)"},
+    {"begin", "iterator begin()"},
+    {"end", "iterator end()"},
+    {"rbegin", "reverse_iterator rbegin()"},
+    {"rend", "reverse_iterator rend()"},
+    {"at", "T& at(size_t)"},
+    {"front", "T& front()"},
+    {"back", "T& back()"},
+    {"insert", "iterator insert(pos, val)"},
+    {"erase", "iterator erase(pos)"},
+    {"find", "iterator find(key)"},
+    {"count", "size_t count(key)"},
+    {"contains", "bool contains(key)"},
+    {"push", "void push(const T&)"},
+    {"pop", "void pop()"},
+    {"top", "T& top()"},
+    {"sort", "void sort(first, last)"},
+    {"reverse", "void reverse(first, last)"},
+    {"unique", "iterator unique(first, last)"},
+    {"rotate", "void rotate(first, mid, last)"},
+    {"fill", "void fill(first, last, val)"},
+    {"max", "T max(a, b)"},
+    {"min", "T min(a, b)"},
+    {"abs", "T abs(T)"},
+    {"gcd", "T gcd(a, b)"},
+    {"swap", "void swap(a, b)"},
+    {"make_pair", "pair<T1,T2> make_pair(a, b)"},
+    {"make_tuple", "tuple<...> make_tuple(...)"},
+    {"get", "T& get<I>(tuple/pair)"},
+    {"lower_bound", "it lower_bound(first,last,val)"},
+    {"upper_bound", "it upper_bound(first,last,val)"},
+    {"binary_search", "bool binary_search(f,l,val)"},
+    {"accumulate", "T accumulate(first,last,init)"},
+    {"count_if", "size_t count_if(f,l,pred)"},
+    {"all_of", "bool all_of(f,l,pred)"},
+    {"any_of", "bool any_of(f,l,pred)"},
+    {"none_of", "bool none_of(f,l,pred)"},
+    {"nth_element", "void nth_element(f,nth,l)"},
+    {"partial_sort", "void partial_sort(f,mid,l)"},
+    {"memset", "void memset(ptr,val,n)"},
+    {"distance", "diff_t distance(first,last)"},
+    {"substr", "string substr(pos, len)"},
+    {"length", "size_t length() const"},
+    {"append", "string& append(str)"},
+    {"to_string", "string to_string(val)"},
+    {"stoi", "int stoi(const string&)"},
+    {"stol", "long stol(const string&)"},
+    {"stoll", "long long stoll(const string&)"},
+    {"stod", "double stod(const string&)"},
+    {"isalpha", "bool isalpha(int)"},
+    {"isdigit", "bool isdigit(int)"},
+    {"tolower", "int tolower(int)"},
+    {"toupper", "int toupper(int)"},
+};
+
+// Joins a question's example testcases into the single newline-separated
+// payload LeetCode's interpret_solution ("Run") endpoint expects as data_input.
+static std::string joinTestcases(const std::vector<std::string> &testcases)
+{
+    std::string result;
+    for (size_t i = 0; i < testcases.size(); i++)
+    {
+        result += testcases[i];
+        if (i + 1 < testcases.size())
+            result += "\n";
+    }
+    return result;
+}
 
 void initColors()
 {
@@ -53,6 +395,14 @@ void initColors()
     else
         init_pair(PAIR_CONFIG_BORDER, COLOR_YELLOW, -1);
     init_pair(PAIR_CONFIG_LABEL, COLOR_CYAN, -1);
+
+    // Highlight box for matching bracket pairs in the code editor
+    // (VSCode-style): black text on a bright background so both halves of
+    // a (), [] or {} pop out from the surrounding code.
+    if (COLORS >= 256)
+        init_pair(PAIR_BRACKET_MATCH, COLOR_BLACK, 214);
+    else
+        init_pair(PAIR_BRACKET_MATCH, COLOR_BLACK, COLOR_YELLOW);
 }
 
 int difficultyColorPair(const std::string &difficulty)
@@ -545,8 +895,340 @@ static int selectLanguage(const std::vector<codeSnippet> &snippets, int currentI
     return chosen;
 }
 
-// Renders the editable code buffer into codePad, auto-scrolling so the
-// cursor always stays visible, and draws a reverse-video block for the cursor.
+// Interactive, live-filtering autocomplete popup. Unlike a one-shot "press
+// Tab, pick, done" menu, this owns the input loop while it's open: typing
+// more letters or Backspace re-filters the list in place (querying
+// wordPrefixAtCursor/autocompleteSuggestions again each time), Up/Down
+// browses, Enter/Tab accepts the highlighted entry and inserts the
+// remainder into `ed`. The popup closes itself once the prefix no longer
+// matches anything (or matches nothing to begin with).
+//
+// Any key it doesn't own (arrows other than Up/Down, punctuation, Ctrl
+// shortcuts, resize, Esc, ...) closes the popup and is written to
+// `pendingKey` instead of being swallowed, so the caller can feed it back
+// through the normal editor key handling exactly as if autocomplete had
+// never intervened. `pendingKey` is 0 if nothing needs to be redispatched
+// (accepted, or cancelled with Esc).
+static void runLiveAutocomplete(Editor &ed, const std::string &langSlug,
+                                 int codeOriginY, int codeOriginX, int &pendingKey)
+{
+    pendingKey = 0;
+    WINDOW *popup = nullptr;
+    int highlight = 0;
+
+    auto closePopup = [&]()
+    {
+        if (popup)
+        {
+            delwin(popup);
+            popup = nullptr;
+        }
+    };
+
+    while (true)
+    {
+        std::string prefix = wordPrefixAtCursor(ed);
+        std::vector<std::string> suggestions = autocompleteSuggestions(prefix, langSlug);
+
+        if (prefix.empty() || suggestions.empty())
+        {
+            closePopup();
+            return;
+        }
+
+        int n = (int)suggestions.size();
+        if (highlight >= n)
+            highlight = 0;
+
+        int rows, cols;
+        getmaxyx(stdscr, rows, cols);
+
+        bool showHints = (langSlug == "cpp");
+        int boxWidth = 8;
+        for (auto &s : suggestions)
+        {
+            int w = (int)s.size() + 4;
+            if (showHints)
+            {
+                auto hintIt = cppFunctionHints.find(s);
+                if (hintIt != cppFunctionHints.end())
+                    w += 3 + (int)hintIt->second.size();
+            }
+            boxWidth = std::max(boxWidth, w);
+        }
+        boxWidth = std::min(boxWidth, std::max(cols - 2, 10));
+
+        int boxHeight = std::min(n + 2, rows - 2);
+        int listHeight = boxHeight - 2;
+
+        int cursorScreenRow = codeOriginY + (ed.cursor.row - ed.scrollOffset);
+        int cursorScreenCol = codeOriginX + codeGutterWidth(ed) + ed.cursor.col;
+
+        int boxY = cursorScreenRow + 1;
+        if (boxY + boxHeight > rows) // no room below: flip above the cursor line
+            boxY = std::max(0, cursorScreenRow - boxHeight);
+        int boxX = std::min(cursorScreenCol, std::max(cols - boxWidth, 0));
+        if (boxX < 0)
+            boxX = 0;
+
+        closePopup(); // size/position can change every keystroke -- rebuild cleanly
+        popup = newwin(boxHeight, boxWidth, boxY, boxX);
+        keypad(popup, TRUE);
+
+        wattron(popup, COLOR_PAIR(PAIR_LOGO_CMD) | A_BOLD);
+        box(popup, 0, 0);
+        wattroff(popup, COLOR_PAIR(PAIR_LOGO_CMD) | A_BOLD);
+
+        int offset = (highlight >= listHeight) ? highlight - listHeight + 1 : 0;
+
+        for (int i = offset; i < offset + listHeight && i < n; i++)
+        {
+            int y = 1 + (i - offset);
+            int attrs = (i == highlight) ? A_REVERSE : A_NORMAL;
+            wattron(popup, attrs);
+
+            std::string line = suggestions[i];
+            if (showHints)
+            {
+                auto hintIt = cppFunctionHints.find(suggestions[i]);
+                if (hintIt != cppFunctionHints.end())
+                    line += "   " + hintIt->second;
+            }
+            mvwprintw(popup, y, 1, "%-*.*s", boxWidth - 2, boxWidth - 2, line.c_str());
+            wattroff(popup, attrs);
+        }
+
+        wrefresh(popup);
+        flushinp();
+        timeout(-1);
+
+        int c = wgetch(popup);
+
+        if (c == KEY_UP)
+            highlight = (highlight - 1 + n) % n;
+        else if (c == KEY_DOWN)
+            highlight = (highlight + 1) % n;
+        else if (c == '\n' || c == KEY_ENTER || c == '\t')
+        {
+            std::string remainder = suggestions[highlight].substr(prefix.size());
+            for (char ch : remainder)
+                ed.insertChar(ch);
+            closePopup();
+            return;
+        }
+        else if (c == 27) // Esc: cancel, leave whatever was already typed as-is
+        {
+            closePopup();
+            return;
+        }
+        else if (c == KEY_BACKSPACE || c == 127 || c == 8)
+        {
+            ed.backspace(); // loop again: prefix/suggestions recomputed at the top
+        }
+        else if (isprint(c) && (isalnum((unsigned char)c) || c == '_'))
+        {
+            ed.insertCharSmart((char)c); // still building the identifier: keep filtering live
+        }
+        else
+        {
+            // Anything else (Left/Right, punctuation that ends the
+            // identifier, Ctrl shortcuts, KEY_RESIZE, ...): close and hand
+            // the key back so it's handled exactly like it would be without
+            // autocomplete in the picture.
+            closePopup();
+            pendingKey = c;
+            return;
+        }
+    }
+}
+
+
+// Satır numarası sütununun genişliğini toplam satır sayısına göre belirler
+// (ör. 999 satıra kadar 3 hane + 1 boşluk = 4 kolon), böylece kod uzadıkça
+// gutter da büyür ama gereksiz yere geniş olmaz.
+static int codeGutterWidth(const Editor &ed)
+{
+    int digits = 1;
+    int n = (int)ed.lines.size();
+    while (n >= 10)
+    {
+        n /= 10;
+        digits++;
+    }
+    return digits + 2; // rakamlar + numaradan sonra 1 boşluk + ayraç boşluğu
+}
+
+// Buradan sonraki üç yardımcı, editöre parantez/süslü parantez eşleştirme
+// ve "bu kapanış hangi bloğa ait" ipucu (VSCode/JetBrains'teki gibi)
+// eklemek için kullanılıyor.
+
+// Her satır için hangi karakterlerin "gerçek kod" (true), hangilerinin
+// string/char literal veya yorum içinde (false) olduğunu işaretler.
+// Böylece "if (c == '}')" gibi bir satırdaki sahte parantez/süslü parantez
+// karakterleri eşleştirmeyi bozmaz.
+static std::vector<std::vector<bool>> computeCodeMask(const std::vector<std::string> &lines)
+{
+    std::vector<std::vector<bool>> mask(lines.size());
+    bool inBlockComment = false;
+
+    for (size_t r = 0; r < lines.size(); r++)
+    {
+        const std::string &line = lines[r];
+        mask[r].assign(line.size(), true);
+        bool inString = false, inChar = false;
+
+        for (size_t c = 0; c < line.size(); c++)
+        {
+            char ch = line[c];
+
+            if (inBlockComment)
+            {
+                mask[r][c] = false;
+                if (ch == '*' && c + 1 < line.size() && line[c + 1] == '/')
+                {
+                    mask[r][c + 1] = false;
+                    c++;
+                    inBlockComment = false;
+                }
+                continue;
+            }
+            if (inString)
+            {
+                mask[r][c] = false;
+                if (ch == '\\' && c + 1 < line.size())
+                {
+                    mask[r][c + 1] = false;
+                    c++;
+                    continue;
+                }
+                if (ch == '"')
+                    inString = false;
+                continue;
+            }
+            if (inChar)
+            {
+                mask[r][c] = false;
+                if (ch == '\\' && c + 1 < line.size())
+                {
+                    mask[r][c + 1] = false;
+                    c++;
+                    continue;
+                }
+                if (ch == '\'')
+                    inChar = false;
+                continue;
+            }
+            if (ch == '/' && c + 1 < line.size() && line[c + 1] == '/')
+            {
+                for (size_t k = c; k < line.size(); k++)
+                    mask[r][k] = false;
+                break;
+            }
+            if (ch == '/' && c + 1 < line.size() && line[c + 1] == '*')
+            {
+                mask[r][c] = false;
+                mask[r][c + 1] = false;
+                c++;
+                inBlockComment = true;
+                continue;
+            }
+            if (ch == '"')
+            {
+                inString = true;
+                continue;
+            }
+            if (ch == '\'')
+            {
+                inChar = true;
+                continue;
+            }
+        }
+    }
+
+    return mask;
+}
+
+// (row, col)'daki karakter bir parantez/süslü parantez/köşeli parantezse,
+// eşini bulur. Sadece mask[]'e göre "gerçek kod" sayılan karakterleri
+// dikkate alır, string/yorum içindekileri yok sayar.
+static bool findMatchingBracket(const Editor &ed, const std::vector<std::vector<bool>> &mask,
+                                 int row, int col, int &mRow, int &mCol)
+{
+    static const std::string OPENERS = "([{";
+    static const std::string CLOSERS = ")]}";
+
+    if (row < 0 || row >= (int)ed.lines.size())
+        return false;
+    const std::string &line = ed.lines[row];
+    if (col < 0 || col >= (int)line.size())
+        return false;
+    if (col >= (int)mask[row].size() || !mask[row][col])
+        return false;
+
+    char ch = line[col];
+    size_t openIdx = OPENERS.find(ch);
+    size_t closeIdx = CLOSERS.find(ch);
+    if (openIdx == std::string::npos && closeIdx == std::string::npos)
+        return false;
+
+    if (openIdx != std::string::npos)
+    {
+        char open = ch, close = CLOSERS[openIdx];
+        int depth = 0;
+        for (int r = row; r < (int)ed.lines.size(); r++)
+        {
+            const std::string &l = ed.lines[r];
+            int startC = (r == row) ? col : 0;
+            for (int c = startC; c < (int)l.size(); c++)
+            {
+                if (c >= (int)mask[r].size() || !mask[r][c])
+                    continue;
+                if (l[c] == open)
+                    depth++;
+                else if (l[c] == close)
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        mRow = r;
+                        mCol = c;
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+    else
+    {
+        char close = ch, open = OPENERS[closeIdx];
+        int depth = 0;
+        for (int r = row; r >= 0; r--)
+        {
+            const std::string &l = ed.lines[r];
+            int startC = (r == row) ? col : (int)l.size() - 1;
+            for (int c = startC; c >= 0; c--)
+            {
+                if (c >= (int)mask[r].size() || !mask[r][c])
+                    continue;
+                if (l[c] == close)
+                    depth++;
+                else if (l[c] == open)
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        mRow = r;
+                        mCol = c;
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+}
+
 static void renderEditor(WINDOW *pad, Editor &ed, int visibleHeight)
 {
     werase(pad);
@@ -559,15 +1241,53 @@ static void renderEditor(WINDOW *pad, Editor &ed, int visibleHeight)
     if (ed.scrollOffset < 0)
         ed.scrollOffset = 0;
 
+    // Satır numarası gutter'ı: LeetCode/VSCode benzeri sol kenar sütunu.
+    int gutterWidth = codeGutterWidth(ed);
+
+    std::vector<std::vector<bool>> mask = computeCodeMask(ed.lines);
+
+    // İmlecin üstünde ya da hemen solunda bir parantez/süslü parantez
+    // varsa eşini bul; ikisini de vurgulayacağız.
+    int matchRow = -1, matchCol = -1, cursorBracketRow = -1, cursorBracketCol = -1;
+    {
+        int cr = ed.cursor.row, cc = ed.cursor.col;
+        if (findMatchingBracket(ed, mask, cr, cc, matchRow, matchCol))
+        {
+            cursorBracketRow = cr;
+            cursorBracketCol = cc;
+        }
+        else if (cc > 0 && findMatchingBracket(ed, mask, cr, cc - 1, matchRow, matchCol))
+        {
+            cursorBracketRow = cr;
+            cursorBracketCol = cc - 1;
+        }
+    }
+
     for (int i = 0; i < (int)ed.lines.size(); i++)
-        mvwprintw(pad, i, 0, "%s", ed.lines[i].c_str());
+    {
+        wattron(pad, A_DIM);
+        mvwprintw(pad, i, 0, "%*d", gutterWidth - 1, i + 1);
+        wattroff(pad, A_DIM);
+        mvwprintw(pad, i, gutterWidth, "%s", ed.lines[i].c_str());
+    }
+
+    // Eşleşen parantez çiftini vurgula.
+    if (matchRow != -1)
+    {
+        wattron(pad, COLOR_PAIR(PAIR_BRACKET_MATCH) | A_BOLD);
+        mvwaddch(pad, cursorBracketRow, gutterWidth + cursorBracketCol,
+                 (unsigned char)ed.lines[cursorBracketRow][cursorBracketCol] | COLOR_PAIR(PAIR_BRACKET_MATCH) | A_BOLD);
+        mvwaddch(pad, matchRow, gutterWidth + matchCol,
+                 (unsigned char)ed.lines[matchRow][matchCol] | COLOR_PAIR(PAIR_BRACKET_MATCH) | A_BOLD);
+        wattroff(pad, COLOR_PAIR(PAIR_BRACKET_MATCH) | A_BOLD);
+    }
 
     // Draw the cursor as a reverse-video block over the character beneath it
     // (or a blank space if the cursor sits past the end of the line).
     chtype under = ' ';
     if (ed.cursor.col < (int)ed.lines[ed.cursor.row].size())
         under = (unsigned char)ed.lines[ed.cursor.row][ed.cursor.col];
-    mvwaddch(pad, ed.cursor.row, ed.cursor.col, under | A_REVERSE);
+    mvwaddch(pad, ed.cursor.row, gutterWidth + ed.cursor.col, under | A_REVERSE);
 }
 
 Screen questionScreen()
@@ -604,19 +1324,32 @@ Screen questionScreen()
     std::string infoText = q.title + "\n\n" + "Difficulty: " + q.difficulty + "\n\n" + cleanContent;
 
     std::string codeText;
-    for (const auto &snippet : q.codeSnippets)
+    bool haveEditedCode = (!lastSubmittedCode.empty() && lastEditedSlug == selectedQuestionSlug);
+
+    if (haveEditedCode)
     {
-        if (snippet.langSlug == "cpp")
-        {
-            codeText = snippet.code;
-            selectedLangSlug = "cpp";
-            break;
-        }
+        // Coming back from Run/Submit for this exact question: restore
+        // what the user actually had in the editor instead of overwriting
+        // it with the pristine template below.
+        codeText = lastSubmittedCode;
+        selectedLangSlug = lastEditedLangSlug;
     }
-    if (codeText.empty() && !q.codeSnippets.empty())
+    else
     {
-        codeText = q.codeSnippets[0].code;
-        selectedLangSlug = q.codeSnippets[0].langSlug;
+        for (const auto &snippet : q.codeSnippets)
+        {
+            if (snippet.langSlug == "cpp")
+            {
+                codeText = snippet.code;
+                selectedLangSlug = "cpp";
+                break;
+            }
+        }
+        if (codeText.empty() && !q.codeSnippets.empty())
+        {
+            codeText = q.codeSnippets[0].code;
+            selectedLangSlug = q.codeSnippets[0].langSlug;
+        }
     }
 
     // Tracks which entry of q.codeSnippets is currently loaded in the editor,
@@ -692,7 +1425,7 @@ Screen questionScreen()
         prefresh(codePad, ed.scrollOffset, 0, 1, half + 1, winHeight - 2, cols - 2);
 
         attron(A_DIM);
-        mvprintw(rows - 1, 1, "TAB: Switch Panel | Arrows: Move/Scroll | Enter/Backspace: Edit | S: Submit | L: Language | Q: Back");
+        mvprintw(rows - 1, 1, "Shift+TAB: Switch Panel | TAB: Indent/Autocomplete | Arrows: Move/Scroll | Enter/Backspace: Edit | R: Run | S: Submit | L: Language | Q: Back");
         attroff(A_DIM);
         refresh();
     };
@@ -712,11 +1445,45 @@ Screen questionScreen()
         }
         else if (c == '\t')
         {
+            // Kod panelindeyken Tab artık paneli DEĞİŞTİRMEZ; önce
+            // autocomplete dener (imleç bir kelimenin hemen sonundaysa),
+            // eşleşme yoksa normal bir editördeki gibi girinti (4 boşluk)
+            // ekler. Panel değiştirmek için Shift+Tab kullanılır — böylece
+            // kod yazarken kullanıcı hiç beklenmedik şekilde info paneline
+            // fırlatılmaz.
+            bool handledAsAutocomplete = false;
+
+            if (focus == FOCUS_CODE)
+            {
+                std::string prefix = wordPrefixAtCursor(ed);
+                if (!prefix.empty())
+                {
+                    std::vector<std::string> suggestions = autocompleteSuggestions(prefix, selectedLangSlug);
+                    if (!suggestions.empty())
+                    {
+                        int pendingKey = 0;
+                        runLiveAutocomplete(ed, selectedLangSlug, 1, half + 1, pendingKey);
+                        handledAsAutocomplete = true;
+                    }
+                }
+
+                if (!handledAsAutocomplete)
+                    ed.insertTab();
+            }
+            else
+            {
+                focus = FOCUS_CODE;
+            }
+        }
+        else if (c == KEY_BTAB) // Shift+Tab: panel değiştir (Tab artık girinti için)
+        {
             focus = (focus == FOCUS_INFO) ? FOCUS_CODE : FOCUS_INFO;
         }
         else if (focus == FOCUS_INFO)
         {
-            // Description panel is read-only: arrows just scroll it.
+            // Description panel is read-only: arrows/paging just scroll it.
+            int maxScroll = std::max(0, infoPadHeight - visibleHeight);
+
             if (c == KEY_UP)
             {
                 if (infoScroll > 0)
@@ -724,13 +1491,37 @@ Screen questionScreen()
             }
             else if (c == KEY_DOWN)
             {
-                int maxScroll = std::max(0, infoPadHeight - visibleHeight);
                 if (infoScroll < maxScroll)
                     infoScroll++;
+            }
+            else if (c == KEY_PPAGE)
+                infoScroll = std::max(0, infoScroll - std::max(1, visibleHeight - 1));
+            else if (c == KEY_NPAGE)
+                infoScroll = std::min(maxScroll, infoScroll + std::max(1, visibleHeight - 1));
+            else if (c == KEY_HOME)
+                infoScroll = 0;
+            else if (c == KEY_END)
+                infoScroll = maxScroll;
+            else if (c == 'r' || c == 'R')
+            {
+                lastSubmittedCode = ed.toString();
+                lastEditedSlug = selectedQuestionSlug;
+                lastEditedLangSlug = selectedLangSlug;
+                lastRunTestcaseList = q.exampleTestcaseList;
+                lastRunTestcases = joinTestcases(lastRunTestcaseList);
+
+                delwin(infoPad);
+                delwin(codePad);
+                delwin(questionInformation);
+                delwin(questionCode);
+
+                return SCREEN_RUN;
             }
             else if (c == 's' || c == 'S')
             {
                 lastSubmittedCode = ed.toString();
+                lastEditedSlug = selectedQuestionSlug;
+                lastEditedLangSlug = selectedLangSlug;
 
                 delwin(infoPad);
                 delwin(codePad);
@@ -758,7 +1549,73 @@ Screen questionScreen()
         }
         else // FOCUS_CODE: real text editing
         {
-            if (c == KEY_UP)
+            // Paste detection: a terminal paste delivers its bytes to
+            // ncurses one getch() at a time, but back-to-back with no
+            // human-typing gaps between them. So whenever we're about to
+            // handle a char that would modify the buffer, peek (non-
+            // blocking) for another char already queued up. If one is
+            // there, this is (almost certainly) a paste burst, not a
+            // keystroke: drain the whole burst and insert it literally,
+            // bypassing auto-indent, auto-closing brackets/quotes and the
+            // live-autocomplete popup -- all of which are exactly what
+            // mangles pasted code (extra indentation piling up line after
+            // line, doubled closing brackets, characters stolen by the
+            // popup's own getch()).
+            bool pasting = false;
+            if (isprint(c) || c == '\n' || c == KEY_ENTER)
+            {
+                nodelay(stdscr, TRUE);
+                int probe = getch();
+                nodelay(stdscr, FALSE);
+                if (probe != ERR)
+                {
+                    ungetch(probe);
+                    pasting = true;
+                }
+            }
+
+            if (pasting)
+            {
+                ungetch(c); // put the first char back so the drain loop below handles it uniformly
+                while (true)
+                {
+                    nodelay(stdscr, TRUE);
+                    int pc = getch();
+                    nodelay(stdscr, FALSE);
+                    if (pc == ERR)
+                        break; // burst drained
+
+                    if (pc == '\r')
+                        continue; // some terminals send CRLF; skip the CR half
+
+                    if (pc == '\n' || pc == KEY_ENTER)
+                    {
+                        // Plain line split, no auto-indent: pasted text
+                        // already carries its own indentation.
+                        std::string rest = ed.lines[ed.cursor.row].substr(ed.cursor.col);
+                        std::string before = ed.lines[ed.cursor.row].substr(0, ed.cursor.col);
+                        ed.lines[ed.cursor.row] = before;
+                        ed.lines.insert(ed.lines.begin() + ed.cursor.row + 1, rest);
+                        ed.cursor.row++;
+                        ed.cursor.col = 0;
+                    }
+                    else if (pc == '\t')
+                    {
+                        ed.insertTab();
+                    }
+                    else if (pc == KEY_BACKSPACE || pc == 127 || pc == 8)
+                    {
+                        ed.backspace();
+                    }
+                    else if (isprint(pc))
+                    {
+                        ed.insertChar((char)pc); // raw insert: no bracket/quote auto-closing
+                    }
+                    // Any other control byte caught mid-burst is dropped
+                    // rather than misinterpreted as a shortcut.
+                }
+            }
+            else if (c == KEY_UP)
                 ed.moveUp();
             else if (c == KEY_DOWN)
                 ed.moveDown();
@@ -766,13 +1623,38 @@ Screen questionScreen()
                 ed.moveLeft();
             else if (c == KEY_RIGHT)
                 ed.moveRight();
+            else if (c == KEY_HOME)
+                ed.moveHome();
+            else if (c == KEY_END)
+                ed.moveEnd();
+            else if (c == KEY_PPAGE) // Page Up
+                ed.pageUp(std::max(1, visibleHeight - 1));
+            else if (c == KEY_NPAGE) // Page Down
+                ed.pageDown(std::max(1, visibleHeight - 1));
             else if (c == '\n' || c == KEY_ENTER)
                 ed.newline();
             else if (c == KEY_BACKSPACE || c == 127 || c == 8)
                 ed.backspace();
+            else if (c == 18) // Ctrl+R as a run-against-samples shortcut while editing
+            {
+                lastSubmittedCode = ed.toString();
+                lastEditedSlug = selectedQuestionSlug;
+                lastEditedLangSlug = selectedLangSlug;
+                lastRunTestcaseList = q.exampleTestcaseList;
+                lastRunTestcases = joinTestcases(lastRunTestcaseList);
+
+                delwin(infoPad);
+                delwin(codePad);
+                delwin(questionInformation);
+                delwin(questionCode);
+
+                return SCREEN_RUN;
+            }
             else if (c == 19) // Ctrl+S as a submit shortcut while editing
             {
                 lastSubmittedCode = ed.toString();
+                lastEditedSlug = selectedQuestionSlug;
+                lastEditedLangSlug = selectedLangSlug;
 
                 delwin(infoPad);
                 delwin(codePad);
@@ -798,7 +1680,51 @@ Screen questionScreen()
                 }
             }
             else if (isprint(c))
-                ed.insertChar((char)c);
+            {
+                ed.insertCharSmart((char)c);
+
+                // Live autocomplete: once at least 2 identifier characters
+                // are typed, pop the suggestion list up immediately instead
+                // of waiting for an explicit Tab press. The popup keeps
+                // filtering as more characters come in and hands back
+                // (via pendingKey) the first key it doesn't own, so nothing
+                // typed while it's open is ever silently dropped.
+                if (isalnum((unsigned char)c) || c == '_')
+                {
+                    std::string prefix = wordPrefixAtCursor(ed);
+                    if (prefix.size() >= 2)
+                    {
+                        int pendingKey = 0;
+                        runLiveAutocomplete(ed, selectedLangSlug, 1, half + 1, pendingKey);
+
+                        if (pendingKey == KEY_UP)
+                            ed.moveUp();
+                        else if (pendingKey == KEY_DOWN)
+                            ed.moveDown();
+                        else if (pendingKey == KEY_LEFT)
+                            ed.moveLeft();
+                        else if (pendingKey == KEY_RIGHT)
+                            ed.moveRight();
+                        else if (pendingKey == KEY_HOME)
+                            ed.moveHome();
+                        else if (pendingKey == KEY_END)
+                            ed.moveEnd();
+                        else if (pendingKey == KEY_PPAGE)
+                            ed.pageUp(std::max(1, visibleHeight - 1));
+                        else if (pendingKey == KEY_NPAGE)
+                            ed.pageDown(std::max(1, visibleHeight - 1));
+                        else if (pendingKey == '\n' || pendingKey == KEY_ENTER)
+                            ed.newline();
+                        else if (pendingKey == KEY_BACKSPACE || pendingKey == 127 || pendingKey == 8)
+                            ed.backspace();
+                        else if (pendingKey != 0 && isprint(pendingKey))
+                            ed.insertCharSmart((char)pendingKey);
+                        // Ctrl+R/S/Q/L and anything else pressed while the
+                        // popup was open are intentionally not redispatched
+                        // here to keep this fast-path simple -- press again.
+                    }
+                }
+            }
         }
 
         refreshAll();
@@ -1154,6 +2080,219 @@ Screen submitScreen()
     return SCREEN_QUESTION;
 }
 
+// Runs the current code against the question's sample testcases only
+// (LeetCode's "Run" — fast feedback, no official submission), then shows a
+// per-testcase Output vs Expected breakdown. Structurally mirrors
+// submitScreen()'s upload -> poll -> scrollable result box flow.
+Screen runScreen()
+{
+    curs_set(0);
+
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+
+    int frame = 0;
+
+    // --- Phase 1: sending the code to the interpreter ---
+    for (int i = 0; i < 5; i++)
+    {
+        drawStatusBox(rows, cols, "Running your code...", frame++);
+        napms(100);
+    }
+
+    // --- Real run + poll flow using leetcode_client.h ---
+    std::string verdict = "Unknown Error";
+    int colorPair = PAIR_SUBMIT_FAIL;
+    std::vector<std::string> detailLines;
+
+    try
+    {
+        runResponse rr = runCode(lastRunTestcases, selectedLangSlug,
+                                  selectedQuestionId, lastSubmittedCode, selectedQuestionSlug);
+
+        // Drop any keys mashed while waiting so the result box doesn't
+        // instantly swallow one on its first getch(), same reasoning as submitScreen().
+        flushinp();
+
+        // interpret_solution is asynchronous too: poll until a statusCode
+        // shows up (0 == still judging), showing an animated spinner meanwhile.
+        runDetail rd;
+        const int maxAttempts = 20;
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            std::string msg = "Running against sample testcases";
+            for (int d = 0; d <= attempt % 3; d++)
+                msg += ".";
+            drawStatusBox(rows, cols, msg, frame++);
+
+            rd = getRunDetail(rr.interpretId, selectedQuestionSlug);
+            if (rd.statusCode != 0)
+                break;
+
+            napms(800); // Sample runs judge faster than full submissions
+            flushinp();
+        }
+
+        int wrapWidth = std::min(cols - 8, 70);
+
+        if (!rd.compileError.empty())
+        {
+            verdict = "Compile Error";
+            colorPair = PAIR_SUBMIT_FAIL;
+            detailLines.push_back("Compiler Output:");
+            for (auto &l : wrapText(rd.compileError, wrapWidth))
+                detailLines.push_back("  " + l);
+        }
+        else if (!rd.runSuccess)
+        {
+            verdict = rd.statusMsg.empty() ? "Runtime Error" : rd.statusMsg;
+            colorPair = PAIR_SUBMIT_FAIL;
+
+            std::string errText = !rd.fullCompileError.empty() ? rd.fullCompileError : rd.compileError;
+            if (!errText.empty())
+            {
+                detailLines.push_back("Error:");
+                for (auto &l : wrapText(errText, wrapWidth))
+                    detailLines.push_back("  " + l);
+            }
+        }
+        else
+        {
+            bool allPassed = (rd.totalTestcases > 0 && rd.totalCorrect == rd.totalTestcases);
+            bool haveScore = rd.totalTestcases > 0;
+
+            verdict = haveScore
+                          ? (allPassed ? "All Testcases Passed" : "Some Testcases Failed")
+                          : "Run Finished";
+            colorPair = !haveScore ? PAIR_LOGO_CMD : (allPassed ? PAIR_SUBMIT_OK : PAIR_MEDIUM);
+            if (haveScore)
+                verdict += "  (" + std::to_string(rd.totalCorrect) + "/" +
+                           std::to_string(rd.totalTestcases) + ")";
+
+            // No "expected output" comes back from this endpoint, so we can't
+            // mark individual cases pass/fail -- just show each sample
+            // testcase's input next to what your code produced for it.
+            size_t caseCount = rd.codeAnswer.size();
+            for (size_t i = 0; i < caseCount; i++)
+            {
+                if (!detailLines.empty())
+                    detailLines.push_back("");
+                detailLines.push_back("Testcase " + std::to_string(i + 1) + ":");
+
+                if (i < lastRunTestcaseList.size())
+                    for (auto &l : wrapText("Input:  " + lastRunTestcaseList[i], wrapWidth))
+                        detailLines.push_back("  " + l);
+
+                for (auto &l : wrapText("Output: " + rd.codeAnswer[i], wrapWidth))
+                    detailLines.push_back("  " + l);
+
+                if (i < rd.stdOutputList.size() && !rd.stdOutputList[i].empty())
+                    for (auto &l : wrapText("Stdout: " + rd.stdOutputList[i], wrapWidth))
+                        detailLines.push_back("  " + l);
+            }
+
+            if (caseCount == 0 && !rd.statusMsg.empty())
+                detailLines.push_back(rd.statusMsg);
+        }
+    }
+    catch (const std::exception &e)
+    {
+        endwin();
+        std::cout << "Exception: " << e.what() << std::endl;
+        std::cin.get();
+        exit(0);
+    }
+
+    // --- Result screen (same scrollable box pattern as submitScreen) ---
+    clear();
+    refresh();
+    getmaxyx(stdscr, rows, cols);
+
+    int boxWidth = std::min(cols - 4, 78);
+    int boxHeight = std::max(10, std::min(rows - 2, 22));
+    int boxY = std::max(0, (rows - boxHeight) / 2);
+    int boxX = std::max(0, (cols - boxWidth) / 2);
+
+    WINDOW *resultWin = newwin(boxHeight, boxWidth, boxY, boxX);
+    keypad(resultWin, TRUE);
+
+    auto printClipped = [&](int y, int x, const std::string &text)
+    {
+        int maxLen = std::max(0, boxWidth - x - 1);
+        std::string clipped = (int)text.size() > maxLen ? text.substr(0, maxLen) : text;
+        mvwprintw(resultWin, y, x, "%s", clipped.c_str());
+    };
+
+    wattron(resultWin, COLOR_PAIR(colorPair) | A_BOLD);
+    box(resultWin, 0, 0);
+    std::string title = " Run Result ";
+    mvwprintw(resultWin, 0, std::max(1, (boxWidth - (int)title.size()) / 2), "%s", title.c_str());
+    printClipped(1, std::max(1, (boxWidth - (int)verdict.size()) / 2), verdict);
+    wattroff(resultWin, COLOR_PAIR(colorPair) | A_BOLD);
+
+    int detailAreaTop = 3;
+    int detailAreaHeight = std::max(1, boxHeight - detailAreaTop - 2);
+    int detailPadHeight = std::max((int)detailLines.size(), 1);
+
+    WINDOW *detailPad = newpad(detailPadHeight, std::max(boxWidth - 4, 1));
+    for (int i = 0; i < (int)detailLines.size(); i++)
+        mvwprintw(detailPad, i, 0, "%s", detailLines[i].c_str());
+
+    int detailScroll = 0;
+    bool scrollable = (int)detailLines.size() > detailAreaHeight;
+    std::string footerText = scrollable
+                                  ? "Up/Down: Scroll  |  Any other key: Back to editor"
+                                  : "Press any key to return to editor...";
+
+    auto renderResult = [&]()
+    {
+        mvwprintw(resultWin, boxHeight - 2, 2, "%*s", boxWidth - 4, "");
+        wattron(resultWin, A_DIM);
+        mvwprintw(resultWin, boxHeight - 2, 2, "%s", footerText.c_str());
+        wattroff(resultWin, A_DIM);
+        wrefresh(resultWin);
+
+        pnoutrefresh(detailPad, detailScroll, 0,
+                     boxY + detailAreaTop, boxX + 2,
+                     boxY + detailAreaTop + detailAreaHeight - 1, boxX + boxWidth - 3);
+        doupdate();
+    };
+
+    renderResult();
+
+    flushinp();
+    timeout(-1);
+
+    while (true)
+    {
+        int key = wgetch(resultWin);
+        if (key == ERR || key == KEY_RESIZE)
+            continue;
+
+        if (key == KEY_UP && detailScroll > 0)
+        {
+            detailScroll--;
+            renderResult();
+            continue;
+        }
+        if (key == KEY_DOWN)
+        {
+            int maxScroll = std::max(0, detailPadHeight - detailAreaHeight);
+            if (detailScroll < maxScroll)
+            {
+                detailScroll++;
+                renderResult();
+                continue;
+            }
+        }
+        break;
+    }
+
+    delwin(detailPad);
+    delwin(resultWin);
+    return SCREEN_QUESTION;
+}
+
 int run_menu()
 {
     initscr();
@@ -1184,6 +2323,10 @@ int run_menu()
 
         case SCREEN_SUBMIT:
             current = submitScreen();
+            break;
+
+        case SCREEN_RUN:
+            current = runScreen();
             break;
 
         default:

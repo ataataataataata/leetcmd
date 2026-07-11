@@ -174,5 +174,7 @@ questionDetail getQuestionDetail(std::string titleSlug);
 void printGetQuestionDetail(std::string titleSlug);
 submitResponse submitCode(std::string titleSlug, std::string code, std::string langSlug, std::string questionId);
 submissionDetail getSubmitDetail(long long submissionId, std::string titleSlug);
+runResponse runCode(std::string data_input, std::string lang, std::string questionId, std::string typedCode, std::string titleSlug);
+runDetail getRunDetail(std::string interpret_id, std::string titleSlug);
 
 #endif // LEETCMD_LEETCODE_CLIENT_H

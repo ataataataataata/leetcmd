@@ -5,6 +5,7 @@ typedef enum {
     SCREEN_MAIN,
     SCREEN_QUESTION,
     SCREEN_SUBMIT,
+    SCREEN_RUN,
     SCREEN_EXIT
 } Screen;
 
@@ -13,5 +14,6 @@ void drawLogo();
 int run_menu();
 Screen questionScreen();
 Screen submitScreen();
+Screen runScreen();
 void initColors();
 void configScreen();
