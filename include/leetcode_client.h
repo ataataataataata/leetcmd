@@ -209,6 +209,95 @@ struct globalData
     } notificationStatus;
 };
 
+struct FollowData
+{
+    int followers;
+    int following;
+};
+
+// digerinin icinde
+struct LanguageProblem
+{
+    std::string languageName;
+    int problemsSolved;
+};
+
+struct LanguageProblemData
+{
+    std::vector<LanguageProblem> languageProblemCount;
+};
+
+// digerinin icinde
+struct TagProblem
+{
+    std::string tagName;
+    std::string tagSlug;
+    int problemsSolved;
+};
+
+struct TagProblemCounts
+{
+    std::vector<TagProblem> advanced;
+    std::vector<TagProblem> intermediate;
+    std::vector<TagProblem> fundamental;
+};
+
+//digerinin icinde
+struct QuestionCount
+{
+    int count;
+    std::string difficulty;
+};
+
+//digerinin icinde
+struct QuestionBeatPercentage
+{
+    std::string difficulty;
+    double percentage;
+};
+
+struct QuestionProgress
+{
+    std::vector<QuestionCount> numAcceptedQuestions;
+    std::vector<QuestionCount> numFailedQuestions;
+    std::vector<QuestionCount> numUntouchedQuestions;
+
+    std::vector<QuestionBeatPercentage> userSessionBeatsPercentage;
+
+    double totalQuestionBeatsPercentage;
+};
+
+//digerinin icinde
+struct AllQuestionsCount
+{
+    std::string difficulty;
+    int count;
+};
+
+//digerinin icinde 
+struct SubmissionStat
+{
+    std::string difficulty;
+    int count;
+    int submissions;
+};
+
+struct SubmitStats
+{
+    std::vector<AllQuestionsCount> allQuestionsCount;
+
+    std::vector<SubmissionStat> acSubmissionNum;
+    std::vector<SubmissionStat> totalSubmissionNum;
+};
+
+struct MePage{
+    FollowData followData;
+    LanguageProblemData languageProblemData;
+    TagProblemCounts tagProblemCounts;
+    QuestionProgress questionProgress;
+    SubmitStats submitStats;
+};
+
 std::vector<questionAtList> getAllQuestions();
 QuestionPage getQuestions(int skip, int limit = 100);
 void printGetAllQuestions();
@@ -220,5 +309,10 @@ runResponse runCode(std::string data_input, std::string lang, std::string questi
 runDetail getRunDetail(std::string interpret_id, std::string titleSlug);
 QuestionPage searchQuestions(int skip, int limit, std::string questionName);
 globalData getglobalData();
+FollowData getFollowData(std::string userSlug);
+LanguageProblemData getLanguageStats(std::string userSlug);
+TagProblemCounts getSkillStats(std::string userSlug);
+QuestionProgress getUserProfileUserQuestionProgressV2(std::string userSlug);
+SubmitStats getuserSessionProgress(std::string userSlug);
 
 #endif // LEETCMD_LEETCODE_CLIENT_H

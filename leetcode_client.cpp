@@ -894,6 +894,456 @@ QuestionPage searchQuestions(int skip, int limit, std::string questionName)
     return page;
 }
 
+FollowData getFollowData(std::string userSlug)
+{
+    std::vector<std::string> tokens = readConfig();
+    std::string leetcode_session = tokens[0];
+    std::string csrftoken = tokens[1];
+
+    std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
+    std::string csrftoken_header = "x-csrftoken: " + csrftoken;
+
+    std::vector<std::string> headers;
+    headers.push_back("Content-Type: application/json");
+    headers.push_back(token_header);
+    headers.push_back(csrftoken_header);
+    headers.push_back("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
+    headers.push_back("Origin: https://leetcode.com");
+    headers.push_back("Accept: */*");
+    headers.push_back("Accept-Language: en-US,en;q=0.9");
+    headers.push_back("sec-fetch-mode: cors");
+    headers.push_back("sec-fetch-site: same-origin");
+    headers.push_back("sec-fetch-dest: empty");
+
+    const std::string url = "https://leetcode.com/graphql/";
+
+    nlohmann::json j;
+    j["operationalName"] = "followCounts";
+    j["quary"] = "\n    query followCounts($userSlug: String!) {\n  followers(userSlug: $userSlug) {\n    allNum\n  }\n  following(userSlug: $userSlug) {\n    allNum\n  }\n}\n    ";
+    j["variables"] = userSlug;
+
+    std::string response = httpPost(url, j.dump(), headers);
+
+    nlohmann::json r = nlohmann::json::parse(response);
+
+    FollowData fd;
+
+    if (!r.contains("data") || r["data"].is_null())
+    {
+        return fd;
+    }
+
+    auto &d = r["data"];
+
+    fd.followers = (d.contains("followers") &&
+                    d["followers"].contains("allNum") &&
+                    !d["followers"]["allNum"].is_null())
+                       ? d["followers"]["allNum"].get<int>()
+                       : 0;
+
+    fd.following = (d.contains("following") &&
+                    d["following"].contains("allNum") &&
+                    !d["following"]["allNum"].is_null())
+                       ? d["following"]["allNum"].get<int>()
+                       : 0;
+
+    return fd;
+}
+
+LanguageProblemData getLanguageStats(std::string userSlug)
+{
+    std::vector<std::string> tokens = readConfig();
+    std::string leetcode_session = tokens[0];
+    std::string csrftoken = tokens[1];
+
+    std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
+    std::string csrftoken_header = "x-csrftoken: " + csrftoken;
+
+    std::vector<std::string> headers;
+    headers.push_back("Content-Type: application/json");
+    headers.push_back(token_header);
+    headers.push_back(csrftoken_header);
+    headers.push_back("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
+    headers.push_back("Origin: https://leetcode.com");
+    headers.push_back("Accept: */*");
+    headers.push_back("Accept-Language: en-US,en;q=0.9");
+    headers.push_back("sec-fetch-mode: cors");
+    headers.push_back("sec-fetch-site: same-origin");
+    headers.push_back("sec-fetch-dest: empty");
+
+    const std::string url = "https://leetcode.com/graphql/";
+
+    nlohmann::json j;
+    j["operationalName"] = "languageStats";
+    j["quary"] = "\n    query languageStats($username: String!) {\n  matchedUser(username: $username) {\n    languageProblemCount {\n      languageName\n      problemsSolved\n    }\n  }\n}\n    ";
+    j["variables"] = userSlug;
+
+    std::string response = httpPost(url, j.dump(), headers);
+
+    nlohmann::json r = nlohmann::json::parse(response);
+
+    LanguageProblemData lpd;
+
+    if (!r.contains("data") ||
+        !r["data"].contains("matchedUser") ||
+        r["data"]["matchedUser"].is_null())
+    {
+        return lpd;
+    }
+
+    auto &u = r["data"]["matchedUser"];
+
+    if (u.contains("languageProblemCount") &&
+        u["languageProblemCount"].is_array())
+    {
+        for (const auto &item : u["languageProblemCount"])
+        {
+            LanguageProblem lp;
+
+            lp.languageName = (item.contains("languageName") &&
+                               !item["languageName"].is_null())
+                                  ? item["languageName"].get<std::string>()
+                                  : "";
+
+            lp.problemsSolved = (item.contains("problemsSolved") &&
+                                 !item["problemsSolved"].is_null())
+                                    ? item["problemsSolved"].get<int>()
+                                    : 0;
+
+            lpd.languageProblemCount.push_back(lp);
+        }
+    }
+
+    return lpd;
+}
+
+TagProblemCounts getSkillStats(std::string userSlug)
+{
+    std::vector<std::string> tokens = readConfig();
+    std::string leetcode_session = tokens[0];
+    std::string csrftoken = tokens[1];
+
+    std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
+    std::string csrftoken_header = "x-csrftoken: " + csrftoken;
+
+    std::vector<std::string> headers;
+    headers.push_back("Content-Type: application/json");
+    headers.push_back(token_header);
+    headers.push_back(csrftoken_header);
+    headers.push_back("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
+    headers.push_back("Origin: https://leetcode.com");
+    headers.push_back("Accept: */*");
+    headers.push_back("Accept-Language: en-US,en;q=0.9");
+    headers.push_back("sec-fetch-mode: cors");
+    headers.push_back("sec-fetch-site: same-origin");
+    headers.push_back("sec-fetch-dest: empty");
+
+    const std::string url = "https://leetcode.com/graphql/";
+
+    nlohmann::json j;
+    j["operationalName"] = "skillStats";
+    j["quary"] = "\n    query skillStats($username: String!) {\n  matchedUser(username: $username) {\n    tagProblemCounts {\n      advanced {\n        tagName\n        tagSlug\n        problemsSolved\n      }\n      intermediate {\n        tagName\n        tagSlug\n        problemsSolved\n      }\n      fundamental {\n        tagName\n        tagSlug\n        problemsSolved\n      }\n    }\n  }\n}\n    ";
+    j["variables"] = userSlug;
+
+    std::string response = httpPost(url, j.dump(), headers);
+
+    nlohmann::json r = nlohmann::json::parse(response);
+
+    TagProblemCounts tpc;
+
+    if (!r.contains("data") ||
+        !r["data"].contains("matchedUser") ||
+        r["data"]["matchedUser"].is_null())
+    {
+        return tpc;
+    }
+
+    auto &u = r["data"]["matchedUser"];
+
+    if (u.contains("tagProblemCounts") &&
+        !u["tagProblemCounts"].is_null())
+    {
+        auto &tags = u["tagProblemCounts"];
+
+        auto parseCategory = [](const nlohmann::json &arr, std::vector<TagProblem> &dest)
+        {
+            if (!arr.is_array())
+                return;
+
+            for (const auto &item : arr)
+            {
+                TagProblem tp;
+
+                tp.tagName = (item.contains("tagName") &&
+                              !item["tagName"].is_null())
+                                 ? item["tagName"].get<std::string>()
+                                 : "";
+
+                tp.tagSlug = (item.contains("tagSlug") &&
+                              !item["tagSlug"].is_null())
+                                 ? item["tagSlug"].get<std::string>()
+                                 : "";
+
+                tp.problemsSolved = (item.contains("problemsSolved") &&
+                                     !item["problemsSolved"].is_null())
+                                        ? item["problemsSolved"].get<int>()
+                                        : 0;
+
+                dest.push_back(tp);
+            }
+        };
+
+        if (tags.contains("advanced"))
+            parseCategory(tags["advanced"], tpc.advanced);
+
+        if (tags.contains("intermediate"))
+            parseCategory(tags["intermediate"], tpc.intermediate);
+
+        if (tags.contains("fundamental"))
+            parseCategory(tags["fundamental"], tpc.fundamental);
+    }
+
+    return tpc;
+}
+
+QuestionProgress getUserProfileUserQuestionProgressV2(std::string userSlug)
+{
+    std::vector<std::string> tokens = readConfig();
+    std::string leetcode_session = tokens[0];
+    std::string csrftoken = tokens[1];
+
+    std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
+    std::string csrftoken_header = "x-csrftoken: " + csrftoken;
+
+    std::vector<std::string> headers;
+    headers.push_back("Content-Type: application/json");
+    headers.push_back(token_header);
+    headers.push_back(csrftoken_header);
+    headers.push_back("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
+    headers.push_back("Origin: https://leetcode.com");
+    headers.push_back("Accept: */*");
+    headers.push_back("Accept-Language: en-US,en;q=0.9");
+    headers.push_back("sec-fetch-mode: cors");
+    headers.push_back("sec-fetch-site: same-origin");
+    headers.push_back("sec-fetch-dest: empty");
+
+    const std::string url = "https://leetcode.com/graphql/";
+
+    nlohmann::json j;
+    j["operationalName"] = "userProfileUserQuestionProgressV2";
+    j["quary"] = "\n    query userProfileUserQuestionProgressV2($userSlug: String!) {\n  userProfileUserQuestionProgressV2(userSlug: $userSlug) {\n    numAcceptedQuestions {\n      count\n      difficulty\n    }\n    numFailedQuestions {\n      count\n      difficulty\n    }\n    numUntouchedQuestions {\n      count\n      difficulty\n    }\n    userSessionBeatsPercentage {\n      difficulty\n      percentage\n    }\n    totalQuestionBeatsPercentage\n  }\n}\n    ";
+    j["variables"] = userSlug;
+
+    std::string response = httpPost(url, j.dump(), headers);
+
+    nlohmann::json r = nlohmann::json::parse(response);
+
+    QuestionProgress qp;
+
+    if (!r.contains("data") ||
+        !r["data"].contains("userProfileUserQuestionProgressV2") ||
+        r["data"]["userProfileUserQuestionProgressV2"].is_null())
+    {
+        return qp;
+    }
+
+    auto &u = r["data"]["userProfileUserQuestionProgressV2"];
+
+    auto parseQuestionCounts = [](const nlohmann::json &arr, std::vector<QuestionCount> &dest)
+    {
+        if (!arr.is_array())
+            return;
+
+        for (const auto &item : arr)
+        {
+            QuestionCount qc;
+
+            qc.count = (item.contains("count") &&
+                        !item["count"].is_null())
+                           ? item["count"].get<int>()
+                           : 0;
+
+            qc.difficulty = (item.contains("difficulty") &&
+                             !item["difficulty"].is_null())
+                                ? item["difficulty"].get<std::string>()
+                                : "";
+
+            dest.push_back(qc);
+        }
+    };
+
+    auto parseBeatPercentages = [](const nlohmann::json &arr, std::vector<QuestionBeatPercentage> &dest)
+    {
+        if (!arr.is_array())
+            return;
+
+        for (const auto &item : arr)
+        {
+            QuestionBeatPercentage qbp;
+
+            qbp.difficulty = (item.contains("difficulty") &&
+                              !item["difficulty"].is_null())
+                                 ? item["difficulty"].get<std::string>()
+                                 : "";
+
+            qbp.percentage = (item.contains("percentage") &&
+                              !item["percentage"].is_null())
+                                 ? item["percentage"].get<double>()
+                                 : 0.0;
+
+            dest.push_back(qbp);
+        }
+    };
+
+    if (u.contains("numAcceptedQuestions"))
+        parseQuestionCounts(u["numAcceptedQuestions"], qp.numAcceptedQuestions);
+
+    if (u.contains("numFailedQuestions"))
+        parseQuestionCounts(u["numFailedQuestions"], qp.numFailedQuestions);
+
+    if (u.contains("numUntouchedQuestions"))
+        parseQuestionCounts(u["numUntouchedQuestions"], qp.numUntouchedQuestions);
+
+    if (u.contains("userSessionBeatsPercentage"))
+        parseBeatPercentages(u["userSessionBeatsPercentage"], qp.userSessionBeatsPercentage);
+
+    qp.totalQuestionBeatsPercentage =
+        (u.contains("totalQuestionBeatsPercentage") &&
+         !u["totalQuestionBeatsPercentage"].is_null())
+            ? u["totalQuestionBeatsPercentage"].get<double>()
+            : 0.0;
+
+    return qp;
+}
+
+SubmitStats getuserSessionProgress(std::string userSlug)
+{
+    std::vector<std::string> tokens = readConfig();
+    std::string leetcode_session = tokens[0];
+    std::string csrftoken = tokens[1];
+
+    std::string token_header = "Cookie: LEETCODE_SESSION=" + leetcode_session + ";csrftoken=" + csrftoken;
+    std::string csrftoken_header = "x-csrftoken: " + csrftoken;
+
+    std::vector<std::string> headers;
+    headers.push_back("Content-Type: application/json");
+    headers.push_back(token_header);
+    headers.push_back(csrftoken_header);
+    headers.push_back("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
+    headers.push_back("Origin: https://leetcode.com");
+    headers.push_back("Accept: */*");
+    headers.push_back("Accept-Language: en-US,en;q=0.9");
+    headers.push_back("sec-fetch-mode: cors");
+    headers.push_back("sec-fetch-site: same-origin");
+    headers.push_back("sec-fetch-dest: empty");
+
+    const std::string url = "https://leetcode.com/graphql/";
+
+    nlohmann::json j;
+    j["operationalName"] = "userSessionProgress";
+    j["quary"] = "\n    query userSessionProgress($username: String!) {\n  allQuestionsCount {\n    difficulty\n    count\n  }\n  matchedUser(username: $username) {\n    submitStats {\n      acSubmissionNum {\n        difficulty\n        count\n        submissions\n      }\n      totalSubmissionNum {\n        difficulty\n        count\n        submissions\n      }\n    }\n  }\n}\n    ";
+    j["variables"] = userSlug;
+
+    std::string response = httpPost(url, j.dump(), headers);
+
+    nlohmann::json r = nlohmann::json::parse(response);
+
+    SubmitStats ss;
+
+    if (!r.contains("data") || r["data"].is_null())
+    {
+        return ss;
+    }
+
+    auto &d = r["data"];
+
+    auto parseAllQuestions = [](const nlohmann::json &arr, std::vector<AllQuestionsCount> &dest)
+    {
+        if (!arr.is_array())
+            return;
+
+        for (const auto &item : arr)
+        {
+            AllQuestionsCount aq;
+
+            aq.difficulty = (item.contains("difficulty") &&
+                             !item["difficulty"].is_null())
+                                ? item["difficulty"].get<std::string>()
+                                : "";
+
+            aq.count = (item.contains("count") &&
+                        !item["count"].is_null())
+                           ? item["count"].get<int>()
+                           : 0;
+
+            dest.push_back(aq);
+        }
+    };
+
+    auto parseSubmissionStats = [](const nlohmann::json &arr, std::vector<SubmissionStat> &dest)
+    {
+        if (!arr.is_array())
+            return;
+
+        for (const auto &item : arr)
+        {
+            SubmissionStat stat;
+
+            stat.difficulty = (item.contains("difficulty") &&
+                               !item["difficulty"].is_null())
+                                  ? item["difficulty"].get<std::string>()
+                                  : "";
+
+            stat.count = (item.contains("count") &&
+                          !item["count"].is_null())
+                             ? item["count"].get<int>()
+                             : 0;
+
+            stat.submissions = (item.contains("submissions") &&
+                                !item["submissions"].is_null())
+                                   ? item["submissions"].get<int>()
+                                   : 0;
+
+            dest.push_back(stat);
+        }
+    };
+
+    if (d.contains("allQuestionsCount"))
+    {
+        parseAllQuestions(d["allQuestionsCount"], ss.allQuestionsCount);
+    }
+
+    if (d.contains("matchedUser") &&
+        d["matchedUser"].contains("submitStats") &&
+        !d["matchedUser"]["submitStats"].is_null())
+    {
+        auto &submitStats = d["matchedUser"]["submitStats"];
+
+        if (submitStats.contains("acSubmissionNum"))
+        {
+            parseSubmissionStats(submitStats["acSubmissionNum"], ss.acSubmissionNum);
+        }
+
+        if (submitStats.contains("totalSubmissionNum"))
+        {
+            parseSubmissionStats(submitStats["totalSubmissionNum"], ss.totalSubmissionNum);
+        }
+    }
+
+    return ss;
+}
+
+MePage getMePage(std::string userSlug){
+    MePage mePage;
+    mePage.followData=getFollowData(userSlug);
+    mePage.languageProblemData=getLanguageStats(userSlug);
+    mePage.tagProblemCounts=getSkillStats(userSlug);
+    mePage.questionProgress=getUserProfileUserQuestionProgressV2(userSlug);
+    mePage.submitStats=getuserSessionProgress(userSlug);
+
+    return mePage;
+}
+
 void printGetAllQuestions()
 {
     std::vector<questionAtList> questionList = getAllQuestions();
