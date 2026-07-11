@@ -2284,19 +2284,24 @@ static int verdictColorPair(int statusCode)
 }
 
 // Small ASCII progress bar used to visualize runtime/memory percentiles,
-// e.g. "[#############-----] 72%".
+// e.g. "[#############-----] 72%". `width` is the length of the ENTIRE
+// returned string (brackets + dashes + trailing " NN%"), not just the
+// bracket portion -- callers can budget space against it directly without
+// needing to know how many extra characters the percentage text costs.
 static std::string percentileBar(double percentile, int width)
 {
-    if (width < 8)
-        width = 8;
-    int inner = width - 2;
+    std::string pct = " " + std::to_string((int)percentile) + "%";
+    int barWidth = width - (int)pct.size();
+    if (barWidth < 8)
+        barWidth = 8;
+    int inner = barWidth - 2;
     int filled = (int)((percentile / 100.0) * inner + 0.5);
     filled = std::max(0, std::min(inner, filled));
 
     std::string bar = "[";
     bar += std::string(filled, '#');
     bar += std::string(inner - filled, '-');
-    bar += "] " + std::to_string((int)percentile) + "%";
+    bar += "]" + pct;
     return bar;
 }
 
@@ -2350,9 +2355,10 @@ Screen submitScreen()
     bool accepted = false;
     int statusCode = -1;
     std::string verdict = "Unknown Error";
-    std::string runtimeInfo, memoryInfo;
+    std::string runtimeInfo, memoryInfo, testcaseInfo;
     double runtimePercentile = -1.0, memoryPercentile = -1.0;
     std::vector<std::string> detailLines; // pre-wrapped extra info (errors, WA input/output/expected)
+    std::vector<bool> detailIsHeader;     // parallel to detailLines: true for section labels (bolded)
 
     try
     {
@@ -2391,47 +2397,69 @@ Screen submitScreen()
 
         int wrapWidth = std::min(cols - 8, 70);
 
-        if (statusCode == 11) // Wrong Answer: show the same Input/Output/Expected
-        {                     // breakdown LeetCode.com itself shows.
+        // WA'ya özel Input/Output/Expected kırılımının yanı sıra, kısmen
+        // testcase geçebilen diğer "çalıştı ama başarısız" durumlarında
+        // (MLE/OLE/TLE) da kaç testcase geçtiğini başlığa ekliyoruz --
+        // eskiden sadece Wrong Answer'da vardı, kullanıcı TLE alınca kaçının
+        // geçtiğini hiç göremiyordu.
+        bool showsTestcaseCount = (statusCode == 11 || statusCode == 12 ||
+                                    statusCode == 13 || statusCode == 14);
+        if (showsTestcaseCount && sd.totalTestcases > 0)
+        {
             verdict += "  (" + std::to_string(sd.totalCorrect) + "/" +
                        std::to_string(sd.totalTestcases) + " testcases passed)";
+        }
 
-            auto addSection = [&](const std::string &label, const std::string &content)
+        auto addSection = [&](const std::string &label, const std::string &content)
+        {
+            if (content.empty())
+                return;
+            if (!detailLines.empty())
             {
-                if (content.empty())
-                    return;
-                if (!detailLines.empty())
-                    detailLines.push_back("");
-                detailLines.push_back(label);
-                for (auto &l : wrapText(content, wrapWidth))
-                    detailLines.push_back("  " + l);
-            };
+                detailLines.push_back("");
+                detailIsHeader.push_back(false);
+            }
+            detailLines.push_back(label);
+            detailIsHeader.push_back(true);
+            for (auto &l : wrapText(content, wrapWidth))
+            {
+                detailLines.push_back("  " + l);
+                detailIsHeader.push_back(false);
+            }
+        };
+
+        if (statusCode == 11) // Wrong Answer: show the same Input/Output/Expected
+        {                     // breakdown LeetCode.com itself shows.
             addSection("Input:", sd.lastTestcase);
             addSection("Output:", sd.codeOutput);
             addSection("Expected:", sd.expectedOutput);
         }
         else if (!sd.compileError.empty())
         {
-            detailLines.push_back("Compiler Output:");
-            for (auto &l : wrapText(sd.compileError, wrapWidth))
-                detailLines.push_back("  " + l);
+            addSection("Compiler Output:", sd.compileError);
         }
         else if (!sd.runtimeError.empty())
         {
-            detailLines.push_back("Runtime Output:");
-            for (auto &l : wrapText(sd.runtimeError, wrapWidth))
-                detailLines.push_back("  " + l);
-            if (!sd.lastTestcase.empty())
-            {
-                detailLines.push_back("");
-                detailLines.push_back("Last Input:");
-                for (auto &l : wrapText(sd.lastTestcase, wrapWidth))
-                    detailLines.push_back("  " + l);
-            }
+            addSection("Runtime Output:", sd.runtimeError);
+            addSection("Last Input:", sd.lastTestcase);
+        }
+
+        // Boş bir detay alanı "yükleme mi takıldı, yoksa gösterecek bir şey
+        // mi yok" sorusunu belirsiz bırakıyordu -- TLE/MLE/OLE gibi hata
+        // metni içermeyen durumlarda en azından bir açıklama basıyoruz.
+        if (!accepted && detailLines.empty())
+        {
+            detailLines.push_back("No additional details available for this verdict.");
+            detailIsHeader.push_back(false);
         }
 
         if (accepted)
         {
+            if (sd.totalTestcases > 0)
+            {
+                testcaseInfo = std::to_string(sd.totalCorrect) + "/" +
+                                std::to_string(sd.totalTestcases) + " testcases passed";
+            }
             if (!sd.runtimeDisplay.empty())
             {
                 runtimeInfo = "Runtime: " + sd.runtimeDisplay;
@@ -2488,13 +2516,20 @@ Screen submitScreen()
     int line = 3;
     if (accepted)
     {
+        if (!testcaseInfo.empty())
+        {
+            wattron(resultWin, A_DIM);
+            printClipped(line++, std::max(1, (boxWidth - (int)testcaseInfo.size()) / 2), testcaseInfo);
+            wattroff(resultWin, A_DIM);
+            line++;
+        }
         if (!runtimeInfo.empty())
         {
             printClipped(line++, 2, runtimeInfo);
             if (runtimePercentile >= 0.0)
             {
                 std::string suffix = " faster";
-                int barWidth = std::max(8, boxWidth - 4 - 2 - (int)suffix.size());
+                int barWidth = std::max(8, boxWidth - 5 - (int)suffix.size());
                 wattron(resultWin, A_DIM);
                 printClipped(line++, 2, "  " + percentileBar(runtimePercentile, barWidth) + suffix);
                 wattroff(resultWin, A_DIM);
@@ -2506,7 +2541,7 @@ Screen submitScreen()
             if (memoryPercentile >= 0.0)
             {
                 std::string suffix = " less mem";
-                int barWidth = std::max(8, boxWidth - 4 - 2 - (int)suffix.size());
+                int barWidth = std::max(8, boxWidth - 5 - (int)suffix.size());
                 wattron(resultWin, A_DIM);
                 printClipped(line++, 2, "  " + percentileBar(memoryPercentile, barWidth) + suffix);
                 wattroff(resultWin, A_DIM);
@@ -2523,7 +2558,14 @@ Screen submitScreen()
 
     WINDOW *detailPad = newpad(detailPadHeight, std::max(boxWidth - 4, 1));
     for (int i = 0; i < (int)detailLines.size(); i++)
+    {
+        bool isHeader = (i < (int)detailIsHeader.size()) && detailIsHeader[i];
+        if (isHeader)
+            wattron(detailPad, A_BOLD);
         mvwprintw(detailPad, i, 0, "%s", detailLines[i].c_str());
+        if (isHeader)
+            wattroff(detailPad, A_BOLD);
+    }
 
     int detailScroll = 0;
     bool scrollable = (int)detailLines.size() > detailAreaHeight;
