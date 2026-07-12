@@ -11,6 +11,7 @@ static int codeGutterWidth(const Editor &ed);
 #include <algorithm>
 #include <unordered_map>
 #include <functional>
+#include <chrono>
 
 #define LOGO_HEIGHT 6
 #define LOGO_SPLIT_COL 34 // column where "leet" and "cmd" parts split (tune to your font)
@@ -694,7 +695,18 @@ static std::string promptFieldScrolling(WINDOW *win, int y, int x, int fieldWidt
 // yoktu zaten. `initial` ile kutu önceki arama terimiyle önceden dolu
 // açılır, böylece kullanıcı terimi düzeltmek için baştan yazmak zorunda
 // kalmaz. `cancelled` true dönerse çağıran taraf hiçbir state değiştirmez.
-static std::string searchPromptBox(const std::string &initial, bool &cancelled)
+// `onLiveChange` kutu açıkken kullanıcı yazmayı DEBOUNCE_MS boyunca
+// durdurduğunda (yeni bir tuşa basmadan) çağrılır -- her tuş vuruşunda
+// değil, aksi halde her karakterde bir API isteği atılırdı. `onLiveChange`
+// içeride searching/searchTerm/questions gibi arkadaki liste state'ini
+// günceller; ardından `redrawBackground` çağrılarak liste yeniden çizilir
+// ve arama kutusu tekrar üstüne çizilir, böylece kullanıcı yazarken
+// sonuçların canlı değiştiğini görür. ESC ile iptalde çağıran taraf
+// (mainScreen) kutu açılmadan önceki state'e geri döner -- bu fonksiyon
+// kendi başına "geri alma" yapmaz, sadece son yazılan metni döndürür.
+static std::string searchPromptBox(const std::string &initial, bool &cancelled,
+                                    const std::function<void(const std::string &)> &onLiveChange,
+                                    const std::function<void()> &redrawBackground)
 {
     cancelled = false;
 
@@ -706,13 +718,16 @@ static std::string searchPromptBox(const std::string &initial, bool &cancelled)
     WINDOW *win = newwin(boxHeight, boxWidth, boxY, boxX);
     keypad(win, TRUE);
 
-    wattron(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
-    box(win, 0, 0);
-    wattroff(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
+    auto drawChrome = [&]()
+    {
+        wattron(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
+        box(win, 0, 0);
+        wattroff(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
 
-    wattron(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
-    mvwprintw(win, 0, 2, " Search ");
-    wattroff(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
+        wattron(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
+        mvwprintw(win, 0, 2, " Search ");
+        wattroff(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
+    };
 
     int fieldX = 1;
     int fieldWidth = boxWidth - 2;
@@ -723,7 +738,7 @@ static std::string searchPromptBox(const std::string &initial, bool &cancelled)
 
     curs_set(1);
 
-    auto redraw = [&]()
+    auto redrawField = [&]()
     {
         if (pos < scrollOff)
             scrollOff = pos;
@@ -732,6 +747,7 @@ static std::string searchPromptBox(const std::string &initial, bool &cancelled)
         if (scrollOff < 0)
             scrollOff = 0;
 
+        drawChrome();
         mvwprintw(win, 1, fieldX, "%*s", fieldWidth, "");
 
         int visibleLen = std::min((int)input.size() - scrollOff, fieldWidth);
@@ -744,17 +760,56 @@ static std::string searchPromptBox(const std::string &initial, bool &cancelled)
         wrefresh(win);
     };
 
-    redraw();
+    redrawField();
+
+    // wgetch'i bloklamayan (kısa timeout'lu) moda al: bu sayede kullanıcı
+    // tuşa basmadığı sürelerde de döngüye dönüp "debounce süresi doldu mu"
+    // diye kontrol edebiliyoruz. 50ms'lik poll aralığı gecikmeyi
+    // hissedilmez tutarken CPU'yu da yormuyor.
+    static const int DEBOUNCE_MS = 350;
+    wtimeout(win, 50);
+
+    bool dirty = false;
+    auto lastChange = std::chrono::steady_clock::now();
+
+    auto fireLiveSearch = [&]()
+    {
+        dirty = false;
+        if (onLiveChange)
+            onLiveChange(input);
+        if (redrawBackground)
+            redrawBackground(); // listeyi günceller, ekranı temizleyip yeniden çizer
+        redrawField();          // arama kutusunu listenin üstüne geri çizer
+    };
 
     int ch;
     while (true)
     {
         ch = wgetch(win);
 
-        if (ch == '\n' || ch == KEY_ENTER)
-            break;
+        if (ch == ERR)
+        {
+            // Bu poll aralığında tuş gelmedi: debounce süresi dolduysa
+            // bekleyen değişikliği şimdi uygula.
+            if (dirty)
+            {
+                auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now() - lastChange)
+                                     .count();
+                if (elapsedMs >= DEBOUNCE_MS)
+                    fireLiveSearch();
+            }
+            continue;
+        }
 
-        if (ch == 27) // ESC: vazgeç, mevcut aramaya/listeye dokunma
+        if (ch == '\n' || ch == KEY_ENTER)
+        {
+            if (dirty)
+                fireLiveSearch(); // kapanmadan önce bekleyen son değişikliği uygula
+            break;
+        }
+
+        if (ch == 27) // ESC: vazgeç, çağıran taraf önceki state'e döner
         {
             cancelled = true;
             break;
@@ -765,12 +820,18 @@ static std::string searchPromptBox(const std::string &initial, bool &cancelled)
             {
                 input.erase(pos - 1, 1);
                 pos--;
+                dirty = true;
+                lastChange = std::chrono::steady_clock::now();
             }
         }
         else if (ch == KEY_DC)
         {
             if (pos < (int)input.size())
+            {
                 input.erase(pos, 1);
+                dirty = true;
+                lastChange = std::chrono::steady_clock::now();
+            }
         }
         else if (ch == KEY_LEFT)
         {
@@ -794,12 +855,15 @@ static std::string searchPromptBox(const std::string &initial, bool &cancelled)
         {
             input.insert(input.begin() + pos, (char)ch);
             pos++;
+            dirty = true;
+            lastChange = std::chrono::steady_clock::now();
         }
 
-        redraw();
+        redrawField();
     }
 
     curs_set(0);
+    wtimeout(win, -1);
     delwin(win);
     return input;
 }
@@ -956,11 +1020,16 @@ Screen mainScreen()
     int offset = 0;
     int list_total_width = 95;
 
-    while (1)
+    // Liste + logo + hint bar çizimi, hem ana döngüde hem de arama
+    // kutusu açıkken (canlı filtreleme sırasında) kutunun arkasını
+    // güncellemek için searchPromptBox'a redrawBackground olarak
+    // paslanmak üzere tek bir lambda'da toplandı -- iki yerde aynı
+    // çizim kodunu tekrar etmemek için.
+    auto renderList = [&]()
     {
         int n = (int)questions.size();
 
-        // page_size her karede yeniden hesaplanır: pencere yeniden
+        // page_size her çağrıda yeniden hesaplanır: pencere yeniden
         // boyutlandırıldığında (KEY_RESIZE) bir kez hesaplanıp bir daha
         // güncellenmeyen eski (stale) bir değer kullanılırsa, liste ya
         // ekran sınırlarının dışına taşar ya da hiç görünmez.
@@ -1020,6 +1089,14 @@ Screen mainScreen()
 
         drawHintBar(LINES - 1, COLS, "Up/Down: Navigate | Enter: Select | /: Search | P: Profile | Q: Quit");
         refresh();
+    };
+
+    while (1)
+    {
+        renderList();
+
+        int n = (int)questions.size();
+        int page_size = std::max(1, LINES - LOGO_HEIGHT - 2);
 
         int c = getch();
         if (c == KEY_UP)
@@ -1070,45 +1147,56 @@ Screen mainScreen()
         else if (c == '/')
         {
             bool cancelled = false;
-            std::string term = searchPromptBox(searchTerm, cancelled);
 
-            if (!cancelled)
+            // Kutu açılmadan önceki durumu sakla: kullanıcı yazarken liste
+            // zaten canlı olarak değişmiş olabileceğinden, ESC ile iptal
+            // edilirse tam olarak buraya geri dönülür.
+            bool prevSearching = searching;
+            std::string prevSearchTerm = searchTerm;
+            std::vector<questionAtList> prevQuestions = questions;
+            int prevApiSkip = apiSkip;
+            bool prevHasMore = hasMore;
+            int prevHighlight = highlight;
+            int prevOffset = offset;
+
+            // Debounce süresi dolduğunda searchPromptBox tarafından
+            // çağrılır: yazılan terimle sunucudan yeni sonuçlar çeker ve
+            // arkadaki state'i (searching/searchTerm/questions/...) günceller.
+            auto applyLiveQuery = [&](const std::string &rawTerm)
             {
-                // Baştaki/sondaki boşlukları at, sadece boşluktan oluşan bir
-                // terim yanlışlıkla "boş değil" sayılıp gereksiz bir API
-                // isteği tetiklemesin.
-                size_t start = term.find_first_not_of(' ');
-                term = (start == std::string::npos)
-                           ? ""
-                           : term.substr(start, term.find_last_not_of(' ') - start + 1);
+                size_t start = rawTerm.find_first_not_of(' ');
+                std::string term = (start == std::string::npos)
+                                       ? ""
+                                       : rawTerm.substr(start, rawTerm.find_last_not_of(' ') - start + 1);
 
-                if (term.empty() && searching)
-                {
-                    // Boş terimle onaylamak aramadan çıkış demek: tam
-                    // listeye geri dön.
-                    searching = false;
-                    searchTerm.clear();
-                    questions.clear();
-                    apiSkip = 0;
-                    hasMore = true;
-                    loadMore();
-                    highlight = 0;
-                    offset = 0;
-                }
-                else if (!term.empty())
-                {
-                    searching = true;
-                    searchTerm = term;
-                    questions.clear();
-                    apiSkip = 0;
-                    hasMore = true;
-                    loadMore();
-                    highlight = 0;
-                    offset = 0;
-                }
-                // term boş ve zaten arama yoksa: hiçbir şey değişmedi,
-                // popup kapanıp normal listeye dönülür.
+                if (term.empty() && !searching)
+                    return; // zaten tam listedeyiz, gereksiz istek atma
+
+                searching = !term.empty();
+                searchTerm = term;
+                questions.clear();
+                apiSkip = 0;
+                hasMore = true;
+                loadMore();
+                highlight = 0;
+                offset = 0;
+            };
+
+            searchPromptBox(searchTerm, cancelled, applyLiveQuery, renderList);
+
+            if (cancelled)
+            {
+                searching = prevSearching;
+                searchTerm = prevSearchTerm;
+                questions = prevQuestions;
+                apiSkip = prevApiSkip;
+                hasMore = prevHasMore;
+                highlight = prevHighlight;
+                offset = prevOffset;
             }
+            // cancelled değilse: applyLiveQuery zaten en güncel terimle
+            // uygulanmış durumda (Enter'dan önce bekleyen değişiklik varsa
+            // searchPromptBox kapanmadan hemen önce onu da uygular).
         }
         else if (c == 'p' || c == 'P')
         {
@@ -2291,17 +2379,29 @@ static int verdictColorPair(int statusCode)
 static std::string percentileBar(double percentile, int width)
 {
     std::string pct = " " + std::to_string((int)percentile) + "%";
-    int barWidth = width - (int)pct.size();
-    if (barWidth < 8)
-        barWidth = 8;
-    int inner = barWidth - 2;
+    // Önceden burada "barWidth < 8 ise 8 yap" vardı -- bu, dönen string'in
+    // uzunluğunun çağıranın istediği `width`'i AŞMASINA yol açıyordu, çünkü
+    // fonksiyon büyütmek yerine küçültmesi gerekirken tam tersini yapıyordu.
+    // Şimdi dönen string uzunluğu her koşulda <= width garantili; bar
+    // gerekirse küçülür (hatta sıfıra iner) ama asla taşmaz.
+    int barWidth = std::max(0, width - (int)pct.size());
+    int inner = std::max(0, barWidth - 2);
     int filled = (int)((percentile / 100.0) * inner + 0.5);
     filled = std::max(0, std::min(inner, filled));
 
-    std::string bar = "[";
-    bar += std::string(filled, '#');
-    bar += std::string(inner - filled, '-');
-    bar += "]" + pct;
+    std::string bar;
+    if (barWidth >= 2)
+    {
+        bar = "[";
+        bar += std::string(filled, '#');
+        bar += std::string(inner - filled, '-');
+        bar += "]";
+    }
+    else
+    {
+        bar = std::string(barWidth, ' ');
+    }
+    bar += pct;
     return bar;
 }
 
@@ -2313,7 +2413,8 @@ static void drawStatusBox(int rows, int cols, const std::string &message, int fr
 {
     static const char spinnerFrames[] = {'|', '/', '-', '\\'};
 
-    int boxWidth = std::min(cols - 4, 50);
+    int boxWidth = std::max(20, std::min(cols - 4, 50));
+    boxWidth = std::min(boxWidth, std::max(cols - 2, 1));
     int boxHeight = 5;
     int boxY = std::max(0, (rows - boxHeight) / 2);
     int boxX = std::max(0, (cols - boxWidth) / 2);
@@ -2329,6 +2430,9 @@ static void drawStatusBox(int rows, int cols, const std::string &message, int fr
     std::string line;
     line += spinnerFrames[frame % 4];
     line += "  " + message;
+    int maxLineLen = std::max(0, boxWidth - 2);
+    if ((int)line.size() > maxLineLen)
+        line = line.substr(0, maxLineLen);
     mvwprintw(win, boxHeight / 2, std::max(1, (boxWidth - (int)line.size()) / 2), "%s", line.c_str());
 
     wrefresh(win);
@@ -2395,7 +2499,11 @@ Screen submitScreen()
         accepted = (statusCode == 10);
         verdict = verdictTitle(statusCode);
 
-        int wrapWidth = std::min(cols - 8, 70);
+        // "  " prefix'i addSection() içinde her satıra ekleniyor; bu yüzden
+        // wrapText'e verilen genişlikten o 2 karakteri düşüyoruz. Aksi halde
+        // wrap edilmiş satır + prefix, pad'in gerçek genişliğini (boxWidth-4)
+        // aşıyor ve metin sağdan taşıp kesiliyordu.
+        int wrapWidth = std::min(cols - 8, 70) - 2;
 
         // WA'ya özel Input/Output/Expected kırılımının yanı sıra, kısmen
         // testcase geçebilen diğer "çalıştı ama başarısız" durumlarında
@@ -2487,8 +2595,14 @@ Screen submitScreen()
 
     int colorPair = verdictColorPair(statusCode);
 
-    int boxWidth = std::min(cols - 4, 78);
-    int boxHeight = std::max(10, std::min(rows - 2, 22));
+    // Eskiden boxHeight = max(10, ...) direkt 10'a sabitliyordu -- terminal
+    // 10 satırdan azsa bile. newwin() ekrandan büyük bir pencere isteyince
+    // sonuç kutusu taşıyor/bozuk görünüyordu. Şimdi gerçek terminal boyutunu
+    // asla aşmıyor.
+    int boxWidth = std::max(20, std::min(cols - 4, 78));
+    boxWidth = std::min(boxWidth, std::max(cols - 2, 1));
+    int boxHeight = std::max(8, std::min(rows - 2, 22));
+    boxHeight = std::min(boxHeight, std::max(rows - 1, 1));
     int boxY = std::max(0, (rows - boxHeight) / 2);
     int boxX = std::max(0, (cols - boxWidth) / 2);
 
@@ -2529,7 +2643,11 @@ Screen submitScreen()
             if (runtimePercentile >= 0.0)
             {
                 std::string suffix = " faster";
-                int barWidth = std::max(8, boxWidth - 5 - (int)suffix.size());
+                // "-5" eskiden printClipped'in kırpma sınırına TAM otururken
+                // (sıfır sağ boşluk), şimdi "-7" ile kenardan gerçek bir
+                // boşluk payı bırakıyoruz -- bar+yüzde metni artık kutunun
+                // sağ kenarına yapışık görünmüyor.
+                int barWidth = std::max(8, boxWidth - 7 - (int)suffix.size());
                 wattron(resultWin, A_DIM);
                 printClipped(line++, 2, "  " + percentileBar(runtimePercentile, barWidth) + suffix);
                 wattroff(resultWin, A_DIM);
@@ -2541,7 +2659,7 @@ Screen submitScreen()
             if (memoryPercentile >= 0.0)
             {
                 std::string suffix = " less mem";
-                int barWidth = std::max(8, boxWidth - 5 - (int)suffix.size());
+                int barWidth = std::max(8, boxWidth - 7 - (int)suffix.size());
                 wattron(resultWin, A_DIM);
                 printClipped(line++, 2, "  " + percentileBar(memoryPercentile, barWidth) + suffix);
                 wattroff(resultWin, A_DIM);
@@ -2556,13 +2674,20 @@ Screen submitScreen()
     int detailAreaHeight = std::max(1, boxHeight - detailAreaTop - 2);
     int detailPadHeight = std::max((int)detailLines.size(), 1);
 
-    WINDOW *detailPad = newpad(detailPadHeight, std::max(boxWidth - 4, 1));
+    int detailPadWidth = std::max(boxWidth - 4, 1);
+    WINDOW *detailPad = newpad(detailPadHeight, detailPadWidth);
     for (int i = 0; i < (int)detailLines.size(); i++)
     {
         bool isHeader = (i < (int)detailIsHeader.size()) && detailIsHeader[i];
+        // Ekstra güvenlik: her ne sebeple olursa olsun pad genişliğini aşan
+        // bir satır gelirse, pad'in gerçek genişliğine göre kes -- taşan
+        // metnin bir sonraki satıra çarpmasını engeller.
+        std::string clippedLine = (int)detailLines[i].size() > detailPadWidth
+                                       ? detailLines[i].substr(0, detailPadWidth)
+                                       : detailLines[i];
         if (isHeader)
             wattron(detailPad, A_BOLD);
-        mvwprintw(detailPad, i, 0, "%s", detailLines[i].c_str());
+        mvwprintw(detailPad, i, 0, "%s", clippedLine.c_str());
         if (isHeader)
             wattroff(detailPad, A_BOLD);
     }
@@ -2680,7 +2805,8 @@ Screen runScreen()
             flushinp();
         }
 
-        int wrapWidth = std::min(cols - 8, 70);
+        // submitScreen()'deki aynı sebep: "  " prefix'i için 2 karakter pay bırak.
+        int wrapWidth = std::min(cols - 8, 70) - 2;
 
         if (!rd.compileError.empty())
         {
@@ -2755,8 +2881,12 @@ Screen runScreen()
     refresh();
     getmaxyx(stdscr, rows, cols);
 
-    int boxWidth = std::min(cols - 4, 78);
-    int boxHeight = std::max(10, std::min(rows - 2, 22));
+    // submitScreen()'deki aynı düzeltme: boxHeight artık gerçek terminal
+    // boyutunu asla aşmıyor.
+    int boxWidth = std::max(20, std::min(cols - 4, 78));
+    boxWidth = std::min(boxWidth, std::max(cols - 2, 1));
+    int boxHeight = std::max(8, std::min(rows - 2, 22));
+    boxHeight = std::min(boxHeight, std::max(rows - 1, 1));
     int boxY = std::max(0, (rows - boxHeight) / 2);
     int boxX = std::max(0, (cols - boxWidth) / 2);
 
@@ -2781,9 +2911,15 @@ Screen runScreen()
     int detailAreaHeight = std::max(1, boxHeight - detailAreaTop - 2);
     int detailPadHeight = std::max((int)detailLines.size(), 1);
 
-    WINDOW *detailPad = newpad(detailPadHeight, std::max(boxWidth - 4, 1));
+    int detailPadWidth = std::max(boxWidth - 4, 1);
+    WINDOW *detailPad = newpad(detailPadHeight, detailPadWidth);
     for (int i = 0; i < (int)detailLines.size(); i++)
-        mvwprintw(detailPad, i, 0, "%s", detailLines[i].c_str());
+    {
+        std::string clippedLine = (int)detailLines[i].size() > detailPadWidth
+                                       ? detailLines[i].substr(0, detailPadWidth)
+                                       : detailLines[i];
+        mvwprintw(detailPad, i, 0, "%s", clippedLine.c_str());
+    }
 
     int detailScroll = 0;
     bool scrollable = (int)detailLines.size() > detailAreaHeight;
@@ -2850,10 +2986,23 @@ Screen runScreen()
 // numAcceptedQuestions / userSessionBeatsPercentage gibi difficulty bazlı
 // listelerden belirli bir "difficulty" değerine karşılık gelen sayıyı
 // bulur; bulunamazsa 0 döner.
+// userProfileUserQuestionProgressV2 difficulty degerlerini "EASY"/"MEDIUM"/"HARD"
+// (buyuk harf) olarak dondurur, diger endpoint'ler ise "Easy"/"Medium"/"Hard"
+// kullanir. Bu yuzden burada case-insensitive karsilastirma yapiyoruz.
+static bool equalsIgnoreCase(const std::string &a, const std::string &b)
+{
+    if (a.size() != b.size())
+        return false;
+    for (size_t i = 0; i < a.size(); i++)
+        if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i]))
+            return false;
+    return true;
+}
+
 static int findCountByDifficulty(const std::vector<QuestionCount> &counts, const std::string &difficulty)
 {
     for (auto &c : counts)
-        if (c.difficulty == difficulty)
+        if (equalsIgnoreCase(c.difficulty, difficulty))
             return c.count;
     return 0;
 }
@@ -2903,7 +3052,11 @@ Screen profileScreen()
     globalData me = getglobalData();
     MePage page = getMePage(me.username);
 
-    int totalSolved = findCountByDifficulty(page.questionProgress.numAcceptedQuestions, "All");
+    // numAcceptedQuestions "All" diye bir toplam kategori icermiyor,
+    // sadece Easy/Medium/Hard var; toplami kendimiz topluyoruz.
+    int totalSolved = 0;
+    for (auto &c : page.questionProgress.numAcceptedQuestions)
+        totalSolved += c.count;
     int totalCount = findCountByDifficulty(page.submitStats.allQuestionsCount, "All");
 
     struct DiffRow
@@ -3034,36 +3187,114 @@ Screen profileScreen()
         wattroff(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
 
         std::string title = " " + (me.username.empty() ? "Profile" : me.username) + " ";
-        wattron(win, A_BOLD);
+        wattron(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
         mvwprintw(win, 0, std::max(1, (boxWidth - (int)title.size()) / 2), "%s", title.c_str());
-        wattroff(win, A_BOLD);
+        wattroff(win, COLOR_PAIR(PAIR_CONFIG_BORDER) | A_BOLD);
 
         int row = 2;
 
-        mvwprintw(win, row, startX, "Following: %d    Followers: %d",
-                  page.followData.following, page.followData.followers);
+        {
+            // Following/Followers: baslikla yarisan bir "ikinci baslik" yerine
+            // ortalanmis, soluk bir alt bilgi satiri.
+            std::string followLine = "Following: " + std::to_string(page.followData.following) +
+                                      "   ·   Followers: " + std::to_string(page.followData.followers);
+            wattron(win, A_DIM);
+            mvwprintw(win, row, std::max(startX, (boxWidth - (int)followLine.size()) / 2), "%s", followLine.c_str());
+            wattroff(win, A_DIM);
+        }
         row++;
         drawSeparator(win, row, boxWidth);
         row++;
 
-        wattron(win, A_BOLD);
-        mvwprintw(win, row, startX, "Solved  %d / %d", totalSolved, totalCount);
-        wattroff(win, A_BOLD);
-        row++;
-
-        for (auto &d : diffs)
+        // "Solved" karti + zorluk bazli mini kartlar -- leetcode.com/u/<user>
+        // profilindeki donut + Easy/Med/Hard kutucuklari ikilisinin
+        // terminaldeki sade karsiligi. Yeterli genislik/yukseklik yoksa
+        // (kucuk terminal) eski duz satir listesine geri duser.
         {
-            int solved = findCountByDifficulty(page.questionProgress.numAcceptedQuestions, d.label);
-            int total = findCountByDifficulty(page.submitStats.allQuestionsCount, d.label);
-            std::string bar = ratioBar(solved, total, 30);
+            int attempting = 0;
+            for (auto &c : page.questionProgress.numFailedQuestions)
+                attempting += c.count;
 
-            wattron(win, A_BOLD);
-            mvwprintw(win, row, startX, "%-7s", d.label.c_str());
-            wprintw(win, "%s", bar.c_str());
-            wattroff(win, A_BOLD);
+            const int statBoxW = 17;
+            const int statBoxH = 5;
+            const int cardH = 3;
+            const int gap = 3;
+            int cardW = std::min(20, contentWidth - statBoxW - gap - 2);
+            int blockHeight = std::max(statBoxH, cardH * 3);
 
-            wprintw(win, " %d/%d", solved, total);
-            row++;
+            if (cardW >= 12 && row + blockHeight <= maxRow)
+            {
+                int blockWidth = statBoxW + gap + cardW;
+                int statX = startX + std::max(0, (contentWidth - blockWidth) / 2);
+                int statY = row + (blockHeight - statBoxH) / 2;
+                int cardX = statX + statBoxW + gap;
+
+                WINDOW *statWin = derwin(win, statBoxH, statBoxW, statY, statX);
+                wattron(statWin, COLOR_PAIR(PAIR_CONFIG_BORDER));
+                box(statWin, 0, 0);
+                wattroff(statWin, COLOR_PAIR(PAIR_CONFIG_BORDER));
+
+                std::string solvedStr = std::to_string(totalSolved) + "/" + std::to_string(totalCount);
+                wattron(statWin, A_BOLD);
+                mvwprintw(statWin, 1, std::max(1, (statBoxW - (int)solvedStr.size()) / 2), "%s", solvedStr.c_str());
+                wattroff(statWin, A_BOLD);
+
+                std::string solvedLbl = "Solved";
+                mvwprintw(statWin, 2, std::max(1, (statBoxW - (int)solvedLbl.size()) / 2), "%s", solvedLbl.c_str());
+
+                wattron(statWin, A_DIM);
+                std::string attLbl = std::to_string(attempting) + " Attempting";
+                mvwprintw(statWin, 3, std::max(1, (statBoxW - (int)attLbl.size()) / 2), "%s", attLbl.c_str());
+                wattroff(statWin, A_DIM);
+
+                wnoutrefresh(statWin);
+                delwin(statWin);
+
+                int cy = row + (blockHeight - cardH * 3) / 2;
+                for (auto &d : diffs)
+                {
+                    int solved = findCountByDifficulty(page.questionProgress.numAcceptedQuestions, d.label);
+                    int total = findCountByDifficulty(page.submitStats.allQuestionsCount, d.label);
+
+                    WINDOW *cardWin = derwin(win, cardH, cardW, cy, cardX);
+                    wattron(cardWin, COLOR_PAIR(d.pair));
+                    box(cardWin, 0, 0);
+                    wattroff(cardWin, COLOR_PAIR(d.pair));
+
+                    wattron(cardWin, COLOR_PAIR(d.pair) | A_BOLD);
+                    mvwprintw(cardWin, 0, 2, " %s ", d.label.c_str());
+                    wattroff(cardWin, COLOR_PAIR(d.pair) | A_BOLD);
+
+                    mvwprintw(cardWin, 1, 2, "%d/%d", solved, total);
+
+                    wnoutrefresh(cardWin);
+                    delwin(cardWin);
+                    cy += cardH;
+                }
+
+                row += blockHeight;
+            }
+            else
+            {
+                // Dar terminal: kartlar sigmiyor, eski satir tabanli goruntuye don.
+                wattron(win, A_BOLD);
+                mvwprintw(win, row, startX, "Solved  %d / %d", totalSolved, totalCount);
+                wattroff(win, A_BOLD);
+                row++;
+
+                for (auto &d : diffs)
+                {
+                    int solved = findCountByDifficulty(page.questionProgress.numAcceptedQuestions, d.label);
+                    int total = findCountByDifficulty(page.submitStats.allQuestionsCount, d.label);
+                    std::string bar = ratioBar(solved, total, 30);
+
+                    wattron(win, COLOR_PAIR(d.pair) | A_BOLD);
+                    mvwprintw(win, row, startX, "%-7s", d.label.c_str());
+                    wattroff(win, COLOR_PAIR(d.pair) | A_BOLD);
+                    wprintw(win, "%s %d/%d", bar.c_str(), solved, total);
+                    row++;
+                }
+            }
         }
         row++;
 
@@ -3072,7 +3303,9 @@ Screen profileScreen()
             drawSeparator(win, row, boxWidth);
             row++;
 
+            wattron(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
             mvwprintw(win, row, startX, "Languages");
+            wattroff(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
             row++;
 
             if (languages.empty())
@@ -3104,9 +3337,9 @@ Screen profileScreen()
             drawSeparator(win, row, boxWidth);
             row++;
 
-            wattron(win, A_BOLD);
+            wattron(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
             mvwprintw(win, row, startX, "Top Skills");
-            wattroff(win, A_BOLD);
+            wattroff(win, COLOR_PAIR(PAIR_CONFIG_LABEL) | A_BOLD);
             row++;
             printTagGroup(win, row, startX, contentWidth, maxRow, "Advanced", advancedTop);
             printTagGroup(win, row, startX, contentWidth, maxRow, "Intermediate", intermediateTop);
